@@ -67,6 +67,7 @@ class DecisionPanel(QWidget):
         self._entry_label = QLabel()
         self._tp_label = QLabel()
         self._sl_label = QLabel()
+        self._confidence_label = QLabel()
 
         for lbl in (
             self._direction_label,
@@ -74,6 +75,7 @@ class DecisionPanel(QWidget):
             self._entry_label,
             self._tp_label,
             self._sl_label,
+            self._confidence_label,
         ):
             lbl.setWordWrap(True)
             details_layout.addWidget(lbl)
@@ -101,6 +103,15 @@ class DecisionPanel(QWidget):
         """Populate the panel with the given Stage-2 decision dict."""
         order_type = decision.get("order_type", _NO_ORDER)
         reasoning = decision.get("reasoning", decision.get("brief_reasoning", ""))
+        confidence = decision.get("confidence", None)
+
+        # Confidence score colour mapping (0-100 integer)
+        def _conf_color(score: int) -> str:
+            if score >= 70:
+                return "#00c850"   # green
+            if score >= 50:
+                return "#e6b800"   # yellow
+            return "#dc3232"       # red
 
         if order_type == _NO_ORDER:
             self._conclusion_label.setText("结论：不下单")
@@ -131,6 +142,28 @@ class DecisionPanel(QWidget):
             self._sl_label.setText(
                 f"止损价：{sl:.5g}" if sl is not None else "止损价：—"
             )
+
+            # Confidence score
+            if confidence is not None:
+                try:
+                    score = int(confidence)
+                    c_color = _conf_color(score)
+                    self._confidence_label.setText(f"信心评分：{score} / 100")
+                    self._confidence_label.setStyleSheet(
+                        f"font-weight: bold; color: {c_color};"
+                    )
+                except (ValueError, TypeError):
+                    # Fallback: model returned old-style string
+                    _legacy = {"high": 80, "medium": 55, "low": 30}
+                    score = _legacy.get(str(confidence).lower(), 50)
+                    c_color = _conf_color(score)
+                    self._confidence_label.setText(f"信心评分：{score} / 100（{confidence}）")
+                    self._confidence_label.setStyleSheet(
+                        f"font-weight: bold; color: {c_color};"
+                    )
+            else:
+                self._confidence_label.setText("")
+
             self._details_widget.setVisible(True)
 
         self._reasoning_edit.setPlainText(str(reasoning) if reasoning else "")

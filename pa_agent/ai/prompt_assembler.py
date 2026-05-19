@@ -49,7 +49,7 @@ _STAGE2_OUTPUT_CONTRACT = """
     "take_profit_price": null,
     "stop_loss_price": null,
     "reasoning": "",
-    "confidence": "high|medium|low",
+    "confidence": 75,
     "key_factors": [],
     "watch_points": [],
     "risk_assessment": "",
@@ -62,6 +62,14 @@ _STAGE2_OUTPUT_CONTRACT = """
   }
 }
 ```
+
+confidence 字段说明：
+- 整数，范围 0-100，表示对本次交易决策的综合信心评分
+- 90-100：极高信心，多重信号共振，市场结构非常清晰
+- 70-89：较高信心，主要信号明确，风险可控
+- 50-69：中等信心，信号存在但有一定不确定性
+- 30-49：较低信心，信号模糊或市场状态不明确，建议减仓或观望
+- 0-29：极低信心，不建议入场，应输出 order_type="不下单"
 """.strip()
 
 
@@ -103,7 +111,8 @@ class PromptAssembler:
             atr = frame.indicators.atr14[i]
             ema_str = f"{ema:.4f}" if not math.isnan(ema) else "N/A"
             atr_str = f"{atr:.4f}" if not math.isnan(atr) else "N/A"
-            dt = datetime.datetime.fromtimestamp(bar.ts_open).strftime("%Y-%m-%d %H:%M")
+            # ts_open is in milliseconds (MT5 source); convert to seconds for fromtimestamp()
+            dt = datetime.datetime.fromtimestamp(bar.ts_open / 1000).strftime("%Y-%m-%d %H:%M")
             lines.append(
                 f"{bar.seq:<4} | {dt:<19} | {bar.open:<9.4f} | {bar.high:<9.4f} | "
                 f"{bar.low:<9.4f} | {bar.close:<9.4f} | {bar.volume:<9.0f} | "

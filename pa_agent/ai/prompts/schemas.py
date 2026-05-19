@@ -101,7 +101,7 @@ _DECISION_BASE: dict = {
         "take_profit_price": {"type": ["number", "null"]},
         "stop_loss_price": {"type": ["number", "null"]},
         "reasoning": {"type": "string"},
-        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "confidence": {"type": ["integer", "number"], "minimum": 0, "maximum": 100},
         "key_factors": {"type": "array", "items": {"type": "string"}},
         "watch_points": {"type": "array", "items": {"type": "string"}},
         "risk_assessment": {"type": "string"},

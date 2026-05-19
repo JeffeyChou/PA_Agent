@@ -1,38 +1,212 @@
-"""MT5 data source stub — not yet implemented.
+"""MetaTrader 5 data source.
 
-To activate: install MetaTrader5 Python package and implement each method.
-See design §B.20 for the extension plan.
+Requires MetaTrader 5 terminal to be installed and running on Windows.
+Install the Python package: pip install MetaTrader5
+
+Usage:
+    source = MT5Source()
+    source.connect()                        # connects to running MT5 terminal
+    source.subscribe("XAUUSD", "1h")
+    bars = source.latest_snapshot(200)      # newest-first, bars[0] = forming bar
 """
 from __future__ import annotations
 
-# from MetaTrader5 import initialize, shutdown, copy_rates_from_pos, ...  # noqa: ERA001
+import logging
+from datetime import datetime, timezone
 
-from pa_agent.data.base import DataSource, KlineBar
+from pa_agent.data.base import (
+    DataSource,
+    DataSourceTransientError,
+    KlineBar,
+)
+
+logger = logging.getLogger(__name__)
+
+# Map our timeframe strings → MT5 TIMEFRAME constants (by name)
+_TF_MAP: dict[str, str] = {
+    "1m":  "TIMEFRAME_M1",
+    "2m":  "TIMEFRAME_M2",
+    "3m":  "TIMEFRAME_M3",
+    "5m":  "TIMEFRAME_M5",
+    "10m": "TIMEFRAME_M10",
+    "15m": "TIMEFRAME_M15",
+    "30m": "TIMEFRAME_M30",
+    "1h":  "TIMEFRAME_H1",
+    "2h":  "TIMEFRAME_H2",
+    "3h":  "TIMEFRAME_H3",
+    "4h":  "TIMEFRAME_H4",
+    "6h":  "TIMEFRAME_H6",
+    "8h":  "TIMEFRAME_H8",
+    "12h": "TIMEFRAME_H12",
+    "1d":  "TIMEFRAME_D1",
+    "1w":  "TIMEFRAME_W1",
+    "1M":  "TIMEFRAME_MN1",
+}
 
 
 class MT5Source(DataSource):
-    """Stub implementation of DataSource for MetaTrader 5.
+    """Live K-line data from MetaTrader 5 terminal.
 
-    All methods raise NotImplementedError until the MT5 integration is built.
+    Zero latency — data comes directly from your broker via the MT5 terminal.
+    MT5 terminal must be open and logged in before calling connect().
     """
 
+    def __init__(self) -> None:
+        self._symbol: str = ""
+        self._timeframe: str = ""
+        self._connected: bool = False
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
     def connect(self) -> None:
-        raise NotImplementedError("MT5 source is a stub; see design §B.20")
+        """Connect to the running MT5 terminal."""
+        try:
+            import MetaTrader5 as mt5  # type: ignore[import]
+        except ImportError as exc:
+            raise DataSourceTransientError(
+                "MetaTrader5 package not installed — run: pip install MetaTrader5"
+            ) from exc
+
+        if not mt5.initialize():
+            error = mt5.last_error()
+            raise DataSourceTransientError(
+                f"MT5 initialize() failed: {error}. "
+                "Make sure MetaTrader 5 terminal is open and logged in."
+            )
+
+        info = mt5.terminal_info()
+        if info is not None:
+            logger.info(
+                "MT5 connected: terminal=%s, build=%s, connected=%s",
+                info.name, info.build, info.connected,
+            )
+        else:
+            logger.info("MT5 connected (terminal info unavailable)")
+
+        self._connected = True
 
     def disconnect(self) -> None:
-        raise NotImplementedError("MT5 source is a stub; see design §B.20")
+        """Shut down the MT5 connection."""
+        if self._connected:
+            try:
+                import MetaTrader5 as mt5  # type: ignore[import]
+                mt5.shutdown()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("MT5 shutdown error: %s", exc)
+        self._connected = False
+        logger.info("MT5Source disconnected")
+
+    # ── Discovery ─────────────────────────────────────────────────────────────
 
     def list_symbols(self) -> list[str]:
-        raise NotImplementedError("MT5 source is a stub; see design §B.20")
+        """Return all symbols available in the MT5 terminal."""
+        if not self._connected:
+            return ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "USDCHF",
+                    "AUDUSD", "USDCAD", "NZDUSD", "XAGUSD"]
+        try:
+            import MetaTrader5 as mt5  # type: ignore[import]
+            symbols = mt5.symbols_get()
+            if symbols:
+                return [s.name for s in symbols]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MT5 list_symbols failed: %s", exc)
+        return []
 
     def supported_timeframes(self) -> list[str]:
-        raise NotImplementedError("MT5 source is a stub; see design §B.20")
+        return list(_TF_MAP.keys())
+
+    # ── Subscription ──────────────────────────────────────────────────────────
 
     def subscribe(self, symbol: str, timeframe: str) -> None:
-        raise NotImplementedError("MT5 source is a stub; see design §B.20")
+        if timeframe not in _TF_MAP:
+            raise ValueError(
+                f"Unsupported timeframe: {timeframe!r}. "
+                f"Use one of {list(_TF_MAP)}"
+            )
+        self._symbol = symbol
+        self._timeframe = timeframe
+        # Tell MT5 to subscribe to this symbol's real-time data
+        if self._connected:
+            try:
+                import MetaTrader5 as mt5  # type: ignore[import]
+                mt5.symbol_select(symbol, True)
+            except Exception:  # noqa: BLE001
+                pass
+        logger.info("MT5Source subscribed: %s %s", symbol, timeframe)
 
     def unsubscribe(self) -> None:
-        raise NotImplementedError("MT5 source is a stub; see design §B.20")
+        self._symbol = ""
+        self._timeframe = ""
+        logger.info("MT5Source unsubscribed")
+
+    # ── Data fetch ────────────────────────────────────────────────────────────
 
     def latest_snapshot(self, n: int) -> list[KlineBar]:
-        raise NotImplementedError("MT5 source is a stub; see design §B.20")
+        """Return *n* bars newest-first; bars[0] is the forming (unclosed) bar.
+
+        Uses copy_rates_from_pos(symbol, timeframe, 0, n+1):
+        - position 0 = current forming bar
+        - position 1..n = closed bars
+        """
+        if not self._connected:
+            raise DataSourceTransientError("Not connected — call connect() first")
+        if not self._symbol or not self._timeframe:
+            raise DataSourceTransientError("Not subscribed — call subscribe() first")
+
+        try:
+            import MetaTrader5 as mt5  # type: ignore[import]
+        except ImportError as exc:
+            raise DataSourceTransientError("MetaTrader5 not installed") from exc
+
+        tf_name = _TF_MAP[self._timeframe]
+        try:
+            tf_const = getattr(mt5, tf_name)
+        except AttributeError as exc:
+            raise DataSourceTransientError(
+                f"MT5 timeframe constant {tf_name!r} not found"
+            ) from exc
+
+        # Ensure the symbol is selected/subscribed in MT5 for real-time data
+        try:
+            mt5.symbol_select(self._symbol, True)
+        except Exception:  # noqa: BLE001
+            pass  # Non-fatal; proceed with fetch
+
+        # Fetch n+1 bars starting from position 0 (current forming bar)
+        rates = mt5.copy_rates_from_pos(self._symbol, tf_const, 0, n + 1)
+
+        if rates is None or len(rates) == 0:
+            error = mt5.last_error()
+            raise DataSourceTransientError(
+                f"MT5 copy_rates_from_pos failed for {self._symbol} {self._timeframe}: "
+                f"{error}"
+            )
+
+        # rates is a numpy structured array sorted newest-first
+        # (copy_rates_from_pos position 0 = current forming bar = newest)
+        # Iterate directly: rates[0] → seq=1 (newest/forming), rates[n-1] → seq=n (oldest)
+        bars: list[KlineBar] = []
+        for i, rate in enumerate(rates):
+            # rate fields: time, open, high, low, close, tick_volume, spread, real_volume
+            ts_ms = int(rate["time"]) * 1000  # MT5 gives UTC seconds
+            try:
+                vol = float(rate["tick_volume"])
+            except (ValueError, KeyError):
+                try:
+                    vol = float(rate["real_volume"])
+                except (ValueError, KeyError):
+                    vol = 0.0
+            bars.append(KlineBar(
+                seq=i + 1,
+                ts_open=ts_ms,
+                open=float(rate["open"]),
+                high=float(rate["high"]),
+                low=float(rate["low"]),
+                close=float(rate["close"]),
+                volume=vol,
+                closed=(i != 0),  # rates[0] is the forming (unclosed) bar
+            ))
+            if len(bars) >= n:
+                break
+
+        return bars

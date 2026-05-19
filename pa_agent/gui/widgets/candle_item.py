@@ -11,8 +11,10 @@ if TYPE_CHECKING:
     from pa_agent.data.base import KlineBar
 
 # Candle colors
-_COLOR_GREEN = QColor(0, 200, 80)
-_COLOR_RED = QColor(220, 50, 50)
+# close >= open → price went UP → green
+# close <  open → price went DOWN → red
+_COLOR_UP   = QColor(38, 166, 154)   # #26a69a  teal-green
+_COLOR_DOWN = QColor(239, 83, 80)    # #ef5350  red
 
 # Candle body width as a fraction of the x-spacing (0..1)
 _BODY_WIDTH = 0.6
@@ -33,7 +35,8 @@ class CandleItem(pg.GraphicsObject):
         super().__init__()
         self._bar = bar
         self._x = x_pos
-        self._color = _COLOR_GREEN if bar.close >= bar.open else _COLOR_RED
+        # close >= open → bullish (green UP); close < open → bearish (red DOWN)
+        self._color = _COLOR_UP if bar.close >= bar.open else _COLOR_DOWN
         self._generate_picture()
 
     # ── pyqtgraph interface ───────────────────────────────────────────────────

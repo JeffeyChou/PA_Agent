@@ -19,7 +19,7 @@ dependencies = [
     "tiktoken>=0.7",
     "jsonschema>=4.22",
     "pydantic>=2.7",
-    "tvdatafeed",
+    "MetaTrader5>=5.0; sys_platform == 'win32'",
     "cryptography>=42",
     "pywin32>=306; sys_platform == 'win32'",
 ]

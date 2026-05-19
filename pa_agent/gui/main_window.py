@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenuBar,
     QPlainTextEdit,
@@ -47,6 +48,7 @@ class _AnalysisWorker(QThread):
     """
 
     finished = pyqtSignal(dict)
+    record_ready = pyqtSignal(object)   # emits the full AnalysisRecord
     status_update = pyqtSignal(str)
 
     def __init__(
@@ -92,7 +94,10 @@ class _AnalysisWorker(QThread):
         except Exception as exc:  # noqa: BLE001
             logger.error("Analysis worker error: %s", exc, exc_info=True)
             decision = {}
+            record = None  # type: ignore[assignment]
 
+        if record is not None:
+            self.record_ready.emit(record)
         self.finished.emit(decision)
 
 
@@ -131,8 +136,21 @@ class MainWindow(QMainWindow):
         # ── Tab widget ────────────────────────────────────────────────────────
         self._tabs = QTabWidget()
         self._home_tab = self._build_home_tab()
-        self._chat_tab = QWidget()
-        self._debug_tab = QWidget()
+
+        # ── Tab 2: Conversation ───────────────────────────────────────────────
+        from pa_agent.gui.conversation_widget import ConversationWidget
+        self._conversation_widget = ConversationWidget()
+        self._chat_tab = self._conversation_widget
+
+        # ── Tab 3: Debug ──────────────────────────────────────────────────────
+        from pa_agent.gui.debug_widget import DebugWidget
+        _api_key = ""
+        _exc_counter = getattr(self._ctx, "exc_counter", None)
+        _settings = getattr(self._ctx, "settings", None)
+        if _settings is not None:
+            _api_key = getattr(_settings.provider, "api_key", "") or ""
+        self._debug_widget = DebugWidget(api_key=_api_key, exc_counter=_exc_counter)
+        self._debug_tab = self._debug_widget
 
         self._tabs.addTab(self._home_tab, "主页")
         self._tabs.addTab(self._chat_tab, "对话页")
@@ -167,18 +185,28 @@ class MainWindow(QMainWindow):
         ctrl_layout = QHBoxLayout()
         ctrl_layout.setSpacing(8)
 
-        # Symbol
+        # Symbol — editable combo (user can type any MT5 symbol)
         ctrl_layout.addWidget(QLabel("品种:"))
         self._symbol_combo = QComboBox()
-        self._symbol_combo.addItems(["XAUUSD", "EURUSD", "BTCUSD"])
-        self._symbol_combo.setMinimumWidth(90)
+        self._symbol_combo.setEditable(True)
+        self._symbol_combo.addItems(["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "XAGUSD"])
+        # Restore last-used symbol from settings
+        _last_symbol = "XAUUSD"
+        _last_tf = "1h"
+        _settings = getattr(self._ctx, "settings", None)
+        if _settings is not None:
+            _last_symbol = getattr(_settings.general, "last_symbol", "XAUUSD") or "XAUUSD"
+            _last_tf = getattr(_settings.general, "last_timeframe", "1h") or "1h"
+        self._symbol_combo.setCurrentText(_last_symbol)
+        self._symbol_combo.setMinimumWidth(110)
+        self._symbol_combo.lineEdit().setPlaceholderText("输入品种名…")
         ctrl_layout.addWidget(self._symbol_combo)
 
         # Timeframe
         ctrl_layout.addWidget(QLabel("周期:"))
         self._tf_combo = QComboBox()
         self._tf_combo.addItems(["1m", "5m", "15m", "1h", "4h", "1d"])
-        self._tf_combo.setCurrentText("1h")
+        self._tf_combo.setCurrentText(_last_tf)
         self._tf_combo.setMinimumWidth(60)
         ctrl_layout.addWidget(self._tf_combo)
         # Bar count
@@ -199,14 +227,72 @@ class MainWindow(QMainWindow):
 
         outer_layout.addLayout(ctrl_layout)
 
-        # ── HTF text area ─────────────────────────────────────────────────────
-        htf_label = QLabel("高时间框架描述 (HTF):")
-        outer_layout.addWidget(htf_label)
+        # ── AI config bar (Base URL / Model / API Key) ────────────────────────
+        ai_layout = QHBoxLayout()
+        ai_layout.setSpacing(6)
 
-        self._htf_edit = QPlainTextEdit()
-        self._htf_edit.setPlaceholderText("请输入高时间框架市场背景描述…")
-        self._htf_edit.setMaximumHeight(80)
-        outer_layout.addWidget(self._htf_edit)
+        ai_layout.addWidget(QLabel("Base URL:"))
+        self._base_url_edit = QLineEdit()
+        self._base_url_edit.setPlaceholderText("https://api.deepseek.com")
+        self._base_url_edit.setMinimumWidth(200)
+        ai_layout.addWidget(self._base_url_edit)
+
+        ai_layout.addWidget(QLabel("模型:"))
+        self._model_edit = QLineEdit()
+        self._model_edit.setPlaceholderText("deepseek-v4-pro")
+        self._model_edit.setMinimumWidth(130)
+        ai_layout.addWidget(self._model_edit)
+
+        ai_layout.addWidget(QLabel("API Key:"))
+        self._api_key_inline_edit = QLineEdit()
+        self._api_key_inline_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._api_key_inline_edit.setPlaceholderText("输入 API Key…")
+        self._api_key_inline_edit.setMinimumWidth(180)
+        ai_layout.addWidget(self._api_key_inline_edit)
+
+        self._ai_save_btn = QPushButton("保存")
+        self._ai_save_btn.setFixedWidth(52)
+        self._ai_save_btn.clicked.connect(self._on_save_ai_config)
+        ai_layout.addWidget(self._ai_save_btn)
+
+        outer_layout.addLayout(ai_layout)
+
+        # Populate AI config fields from settings
+        _ai_settings = getattr(self._ctx, "settings", None)
+        if _ai_settings is not None:
+            _p = _ai_settings.provider
+            self._base_url_edit.setText(getattr(_p, "base_url", "") or "")
+            self._model_edit.setText(getattr(_p, "model", "") or "")
+            self._api_key_inline_edit.setText(getattr(_p, "api_key", "") or "")
+
+        # ── HTF status label (auto-fetched, read-only) ────────────────────────
+        htf_row = QHBoxLayout()
+        htf_row.addWidget(QLabel("HTF 周期:"))
+        self._htf_tf_label = QLabel("—")
+        self._htf_tf_label.setStyleSheet("color: #888888;")
+        htf_row.addWidget(self._htf_tf_label)
+        htf_row.addStretch()
+        self._htf_status_label = QLabel("（提交时自动获取）")
+        self._htf_status_label.setStyleSheet("color: #888888; font-size: 11px;")
+        htf_row.addWidget(self._htf_status_label)
+
+        # ── Last refresh elapsed label ────────────────────────────────────────
+        self._last_refresh_ts: float = 0.0   # monotonic time of last chart update
+        self._refresh_elapsed_label = QLabel("距上次刷新: —")
+        self._refresh_elapsed_label.setStyleSheet("color: #888888; font-size: 11px;")
+        htf_row.addWidget(self._refresh_elapsed_label)
+
+        # 1-second ticker to update the elapsed label
+        from PyQt6.QtCore import QTimer as _QTimer
+        self._elapsed_ticker = _QTimer(tab)
+        self._elapsed_ticker.setInterval(1000)
+        self._elapsed_ticker.timeout.connect(self._update_refresh_elapsed)
+        self._elapsed_ticker.start()
+
+        outer_layout.addLayout(htf_row)
+        # Set initial HTF label based on restored timeframe
+        _htf_init = self._HTF_MAP.get(_last_tf, "—")
+        self._htf_tf_label.setText(_htf_init)
 
         # ── Chart + Decision splitter ─────────────────────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -251,16 +337,18 @@ class MainWindow(QMainWindow):
             return
         bus.status.connect(self._on_status_update)
 
-        # Wire data_frame signal to chart widget if available
-        if hasattr(bus, "data_frame"):
-            bus.data_frame.connect(self._on_data_frame)
-
     def _start_refresh_loop(self) -> None:
-        """Start the RefreshLoop in a dedicated QThread if data_source is available."""
+        """Start the RefreshLoop only when the data source is connected."""
         data_source = getattr(self._ctx, "data_source", None)
         buffer = getattr(self._ctx, "buffer", None)
         if data_source is None or buffer is None:
             logger.debug("RefreshLoop not started: data_source or buffer not available")
+            return
+
+        # Don't start if the data source hasn't connected yet
+        if not getattr(data_source, "_connected", False):
+            logger.info("Data source not connected — RefreshLoop deferred.")
+            self._status_bar.showMessage("数据源未连接，请检查网络后重启程序")
             return
 
         from pa_agent.data.refresh_loop import RefreshLoop
@@ -286,14 +374,10 @@ class MainWindow(QMainWindow):
         self._refresh_loop.frame_ready.connect(self._on_refresh_frame_ready)
         self._refresh_loop.status_changed.connect(self._on_status_update)
 
-        # Wire to event bus if available
-        bus = self._ctx.event_bus
-        if bus is not None:
-            self._refresh_loop.frame_ready.connect(bus.emit_data_frame)
-            self._refresh_loop.status_changed.connect(bus.emit_status)
-
         self._refresh_loop.start()
-        logger.debug("RefreshLoop started")
+        logger.info("RefreshLoop started for %s %s",
+                    getattr(data_source, "_symbol", "?"),
+                    getattr(data_source, "_timeframe", "?"))
 
     # ── Slots ─────────────────────────────────────────────────────────────────
 
@@ -301,20 +385,59 @@ class MainWindow(QMainWindow):
         """Update the status bar with subscription / analysis / data-delay text."""
         self._status_bar.showMessage(text)
 
+    def _update_refresh_elapsed(self) -> None:
+        """Update the 'distance from last refresh' label every second."""
+        import time as _time
+        label = getattr(self, "_refresh_elapsed_label", None)
+        if label is None:
+            return
+        if self._last_refresh_ts == 0.0:
+            label.setText("距上次刷新: —")
+            return
+        elapsed = int(_time.monotonic() - self._last_refresh_ts)
+        if elapsed < 60:
+            label.setText(f"距上次刷新: {elapsed}s")
+        else:
+            m, s = divmod(elapsed, 60)
+            label.setText(f"距上次刷新: {m}m{s:02d}s")
+        # Turn red if stale (> 10 seconds without update)
+        if elapsed > 10:
+            label.setStyleSheet("color: #dc3232; font-size: 11px;")
+        else:
+            label.setStyleSheet("color: #888888; font-size: 11px;")
+
     def _on_data_frame(self, frame: Any) -> None:
         """Forward a new KlineFrame to the chart widget (throttled by 30 Hz timer)."""
         self._chart_widget.set_frame(frame)
 
     def _on_refresh_frame_ready(self, bars: Any) -> None:
-        """Handle frame_ready signal from RefreshLoop (raw bar list)."""
-        # The RefreshLoop emits a list of bars; we forward via the event bus
-        # or directly update the chart if the bus is not available.
-        bus = self._ctx.event_bus
-        if bus is None:
-            # Direct path: build a minimal frame and push to chart
-            # (full KlineFrame building happens in snapshot; here we just
-            # update the buffer which the chart reads via its 30Hz timer)
-            pass
+        """Handle frame_ready signal from RefreshLoop."""
+        if not bars:
+            return
+
+        buffer = getattr(self._ctx, "buffer", None)
+        if buffer is None:
+            return
+
+        try:
+            from pa_agent.data.snapshot import take_snapshot
+            import time as _time
+            settings = getattr(self._ctx, "settings", None)
+            n_bars = 200
+            if settings is not None:
+                n_bars = getattr(settings.general, "default_bar_count", 200)
+
+            symbol = self._symbol_combo.currentText().strip()
+            timeframe = self._tf_combo.currentText()
+
+            frame = take_snapshot(buffer, n_bars, symbol, timeframe)
+            self._chart_widget.set_frame(frame)
+
+            # Record the time of this successful chart update
+            self._last_refresh_ts = _time.monotonic()
+            self._update_refresh_elapsed()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Frame build skipped: %s", exc)
 
     def _on_symbol_or_tf_changed(self, new_symbol: str, new_tf: str) -> None:
         """Handle symbol or timeframe combo box change.
@@ -396,6 +519,22 @@ class MainWindow(QMainWindow):
             self._status_bar.showMessage(f"已切换至 {new_symbol} {new_tf}")
             logger.info("Symbol/TF switched to %s %s", new_symbol, new_tf)
 
+            # Persist last-used symbol/timeframe to settings
+            settings = getattr(self._ctx, "settings", None)
+            if settings is not None:
+                settings.general.last_symbol = new_symbol
+                settings.general.last_timeframe = new_tf
+                try:
+                    from pa_agent.config.settings import save_settings
+                    save_settings(settings)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Failed to persist symbol/tf to settings: %s", exc)
+
+            # Update HTF label to reflect new timeframe
+            htf = self._HTF_MAP.get(new_tf, "—")
+            self._htf_tf_label.setText(htf)
+            self._htf_status_label.setText("（提交时自动获取）")
+
         finally:
             self._switching = False
 
@@ -427,7 +566,9 @@ class MainWindow(QMainWindow):
         symbol = self._symbol_combo.currentText()
         timeframe = self._tf_combo.currentText()
         bar_count = self._bar_count_spin.value()
-        htf_text = self._htf_edit.toPlainText().strip()
+
+        # Auto-fetch HTF K-line data
+        htf_text = self._fetch_htf_text(symbol, timeframe)
 
         # Try to build a KlineFrame snapshot
         frame = self._take_snapshot(symbol, timeframe, bar_count)
@@ -455,12 +596,23 @@ class MainWindow(QMainWindow):
             parent=None,  # No parent so it can be moved/managed independently
         )
         self._worker.finished.connect(self._on_analysis_finished)
+        self._worker.record_ready.connect(self._on_record_ready)
         self._worker.status_update.connect(self._on_status_update)
         self._worker.finished.connect(lambda _: self._on_worker_done())
 
         self._analysis_in_progress = True
         self._update_submit_button_state()
         self._status_bar.showMessage("分析中…")
+
+        # Clear previous results from conversation and debug tabs
+        conv = getattr(self, "_conversation_widget", None)
+        if conv is not None:
+            conv.clear()
+            conv.on_analysis_started()
+        debug = getattr(self, "_debug_widget", None)
+        if debug is not None:
+            debug.clear()
+
         self._worker.start()
 
     def _on_analysis_finished(self, decision: dict) -> None:
@@ -479,12 +631,125 @@ class MainWindow(QMainWindow):
         else:
             self._decision_panel.clear()
 
+    def _on_record_ready(self, record: Any) -> None:
+        """Push the full AnalysisRecord to the conversation and debug tabs."""
+        import json as _json
+
+        # ── Debug tab: add Stage1 and Stage2 turns ────────────────────────────
+        debug = getattr(self, "_debug_widget", None)
+        if debug is not None:
+            # Stage 1 turn
+            s1_msgs = getattr(record, "stage1_messages", []) or []
+            s1_system = next((m.get("content", "") for m in s1_msgs if m.get("role") == "system"), "")
+            s1_user = next((m.get("content", "") for m in s1_msgs if m.get("role") == "user"), "")
+            s1_raw = getattr(record, "stage1_response", {}) or {}
+            s1_diag = getattr(record, "stage1_diagnosis", None)
+            s1_validation = _json.dumps(s1_diag, ensure_ascii=False, indent=2) if s1_diag else "（验证失败或无数据）"
+            debug.add_turn({
+                "label": "Stage1 诊断",
+                "system_prompt": s1_system,
+                "user_prompt": s1_user,
+                "raw_response": s1_raw,
+                "validation_info": s1_validation,
+            })
+
+            # Stage 2 turn
+            s2_msgs = getattr(record, "stage2_messages", []) or []
+            s2_system = next((m.get("content", "") for m in s2_msgs if m.get("role") == "system"), "")
+            s2_user = next((m.get("content", "") for m in s2_msgs if m.get("role") == "user"), "")
+            s2_raw = getattr(record, "stage2_response", {}) or {}
+            s2_decision = getattr(record, "stage2_decision", None)
+            s2_validation = _json.dumps(s2_decision, ensure_ascii=False, indent=2) if s2_decision else "（验证失败或无数据）"
+            debug.add_turn({
+                "label": "Stage2 决策",
+                "system_prompt": s2_system,
+                "user_prompt": s2_user,
+                "raw_response": s2_raw,
+                "validation_info": s2_validation,
+            })
+
+            # Exception info if any
+            exc_info = getattr(record, "exception", None)
+            if exc_info:
+                debug.add_turn({
+                    "label": "⚠ 异常",
+                    "system_prompt": "",
+                    "user_prompt": "",
+                    "raw_response": {},
+                    "validation_info": _json.dumps(exc_info, ensure_ascii=False, indent=2),
+                })
+
+        # ── Conversation tab: show stage results ──────────────────────────────
+        conv = getattr(self, "_conversation_widget", None)
+        if conv is not None:
+            # Stage 1 result
+            s1_diag = getattr(record, "stage1_diagnosis", None)
+            if s1_diag:
+                s1_content = _json.dumps(s1_diag, ensure_ascii=False, indent=2)
+                s1_raw = getattr(record, "stage1_response", {}) or {}
+                s1_reasoning = ""
+                if isinstance(s1_raw, dict):
+                    choices = s1_raw.get("choices", [])
+                    if choices:
+                        msg = choices[0].get("message", {})
+                        s1_reasoning = msg.get("reasoning_content", "") or ""
+                conv.show_stage_result("阶段一：市场诊断", s1_content, s1_reasoning)
+
+            # Stage 2 result
+            s2_decision = getattr(record, "stage2_decision", None)
+            if s2_decision:
+                s2_content = _json.dumps(s2_decision, ensure_ascii=False, indent=2)
+                s2_raw = getattr(record, "stage2_response", {}) or {}
+                s2_reasoning = ""
+                if isinstance(s2_raw, dict):
+                    choices = s2_raw.get("choices", [])
+                    if choices:
+                        msg = choices[0].get("message", {})
+                        s2_reasoning = msg.get("reasoning_content", "") or ""
+                conv.show_stage_result("阶段二：交易决策", s2_content, s2_reasoning)
+                conv.on_record_saved()  # enable free-chat input
+
     def _on_worker_done(self) -> None:
         """Reset in-progress flag and re-enable the submit button."""
         self._analysis_in_progress = False
         self._worker = None
         self._update_submit_button_state()
         self._status_bar.showMessage("分析完成")
+
+    def _on_save_ai_config(self) -> None:
+        """Save Base URL / Model / API Key from the inline config bar to settings."""
+        settings = getattr(self._ctx, "settings", None)
+        if settings is None:
+            self._status_bar.showMessage("设置对象未初始化")
+            return
+
+        base_url = self._base_url_edit.text().strip()
+        model = self._model_edit.text().strip()
+        api_key = self._api_key_inline_edit.text()
+
+        if base_url:
+            settings.provider.base_url = base_url
+        if model:
+            settings.provider.model = model
+        if api_key:
+            settings.provider.api_key = api_key
+
+        try:
+            from pa_agent.config.settings import save_settings
+            save_settings(settings)
+            self._status_bar.showMessage("AI 配置已保存")
+            logger.info("AI config saved: base_url=%s model=%s key=***", base_url, model)
+        except Exception as exc:  # noqa: BLE001
+            self._status_bar.showMessage(f"保存失败: {exc}")
+            logger.error("Failed to save AI config: %s", exc)
+
+        # Also update the DeepSeekClient in ctx so the next analysis uses the new key
+        client = getattr(self._ctx, "client", None)
+        if client is not None:
+            try:
+                client._settings = settings.provider  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                pass
 
     def _open_settings_dialog(self) -> None:
         """Open the SettingsDialog; import lazily to avoid circular imports."""
@@ -543,6 +808,73 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             logger.warning("Snapshot failed: %s", exc)
             return None
+
+    # ── HTF auto-fetch ────────────────────────────────────────────────────────
+
+    # Map current timeframe → higher timeframe to use as context
+    _HTF_MAP: dict[str, str] = {
+        "1m":  "15m",
+        "3m":  "1h",
+        "5m":  "1h",
+        "15m": "4h",
+        "30m": "4h",
+        "45m": "4h",
+        "1h":  "4h",
+        "2h":  "1d",
+        "3h":  "1d",
+        "4h":  "1d",
+        "1d":  "1w",
+        "1w":  "1M",
+    }
+
+    def _fetch_htf_text(self, symbol: str, timeframe: str) -> str:
+        """Fetch the higher-timeframe K-line data and format it as text for the AI.
+
+        Returns an empty string on any error (analysis still proceeds).
+        """
+        htf = self._HTF_MAP.get(timeframe, "")
+        if not htf:
+            return ""
+
+        # Update the UI label
+        self._htf_tf_label.setText(htf)
+        self._htf_status_label.setText("获取中…")
+
+        data_source = getattr(self._ctx, "data_source", None)
+        if data_source is None or not getattr(data_source, "_connected", False):
+            self._htf_status_label.setText("（数据源未连接）")
+            return ""
+
+        try:
+            # Temporarily subscribe to HTF, fetch 50 bars, then restore
+            original_symbol = getattr(data_source, "_symbol", symbol)
+            original_tf = getattr(data_source, "_timeframe", timeframe)
+
+            data_source.subscribe(symbol, htf)
+            bars = data_source.latest_snapshot(50)
+            data_source.subscribe(original_symbol, original_tf)
+
+            if not bars:
+                self._htf_status_label.setText("（无数据）")
+                return ""
+
+            # Format as a compact text table for the AI
+            lines = [f"## 高时间框架 K 线数据 ({symbol} {htf}，最近 {len(bars)} 根，序号1=最新)"]
+            lines.append("序号 | 开盘 | 最高 | 最低 | 收盘 | 成交量")
+            lines.append("-----|------|------|------|------|------")
+            for bar in bars[:30]:  # cap at 30 to keep prompt size reasonable
+                lines.append(
+                    f"#{bar.seq} | {bar.open:.2f} | {bar.high:.2f} | "
+                    f"{bar.low:.2f} | {bar.close:.2f} | {bar.volume:.0f}"
+                )
+
+            self._htf_status_label.setText(f"✓ 已获取 {len(bars)} 根 {htf} K线")
+            return "\n".join(lines)
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("HTF fetch failed (%s %s): %s", symbol, htf, exc)
+            self._htf_status_label.setText(f"（获取失败: {exc}）")
+            return ""
 
     def _build_orchestrator(self) -> Any:
         """Build a TwoStageOrchestrator from ctx components, or return None."""

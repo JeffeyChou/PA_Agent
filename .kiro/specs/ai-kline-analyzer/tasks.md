@@ -153,9 +153,9 @@
   - [x] 19.3 在 `tests/e2e/test_smoke_switch_mid_flight.py` 在 stage2 进行中切换 symbol，断言 worker 取消、`consecutive_count` 不变、Tab2 输入框被禁用。 (R3.2, R3.3, R3.4, R16.5)
   - [x] 19.4 在 `tests/e2e/test_smoke_free_chat.py` 完成两阶段后在 Tab2 发送一条消息，断言 `FreeChatSession` 完成一轮、`<basename>.followups.jsonl` 多一行、`ledger` 累加。 (R11.2, R11.3, R11.7, R12.4)
 
-- [ ] 20. 打包与开发体验
-  - [ ] 20.1 编写 `D:\cl\PA_Agent\README.md`：包含项目说明、Windows 11 + Python 3.11 安装步骤、`python -m pa_agent.main` 启动命令、`pytest` / `pytest -m "not e2e"` 运行命令、目录结构概览、配置文件位置、常见问题。 (R0 隐含 / 设计 §7)
-  - [ ] 20.2 编写 `D:\cl\PA_Agent\Makefile`（或 `tasks.json`）暴露三个目标：`run`（启动 GUI）、`test`（`pytest -q`）、`lint`（`ruff check . && black --check .`）。 (R0 隐含 / 设计 §8)
+- [x] 20. 打包与开发体验
+  - [x] 20.1 编写 `D:\cl\PA_Agent\README.md`：包含项目说明、Windows 11 + Python 3.11 安装步骤、`python -m pa_agent.main` 启动命令、`pytest` / `pytest -m "not e2e"` 运行命令、目录结构概览、配置文件位置、常见问题。 (R0 隐含 / 设计 §7)
+  - [x] 20.2 编写 `D:\cl\PA_Agent\Makefile`（或 `tasks.json`）暴露三个目标：`run`（启动 GUI）、`test`（`pytest -q`）、`lint`（`ruff check . && black --check .`）。 (R0 隐含 / 设计 §8)
 ---
 
 ## 备注

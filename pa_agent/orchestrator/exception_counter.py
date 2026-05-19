@@ -322,7 +322,7 @@ class ExceptionCounter:
 
         if self._event_bus is not None:
             try:
-                self._event_bus.emit("exception", payload)
+                self._event_bus.emit_exception(payload)
             except Exception as exc:  # noqa: BLE001
                 logger.error("Failed to emit exception alarm: %s", exc)
 

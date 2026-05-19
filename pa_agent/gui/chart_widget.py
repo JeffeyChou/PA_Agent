@@ -133,11 +133,12 @@ class ChartWidget(pg.PlotWidget):
             self.addItem(candle)
             self._candle_items.append(candle)
 
-            # Sequence label above the high
-            label_y = bar.high
-            seq_label = SeqLabelItem(bar.seq, x_pos, label_y)
-            self.addItem(seq_label)
-            self._seq_labels.append(seq_label)
+            # Sequence label above the high — only odd seq numbers (1, 3, 5, …)
+            if bar.seq % 2 == 1:
+                label_y = bar.high
+                seq_label = SeqLabelItem(bar.seq, x_pos, label_y)
+                self.addItem(seq_label)
+                self._seq_labels.append(seq_label)
 
             # EMA20 point (skip NaN)
             ema_val = frame.indicators.ema20[i]

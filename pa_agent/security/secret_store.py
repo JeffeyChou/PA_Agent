@@ -98,7 +98,11 @@ class SecretStore:
         if not plaintext:
             return ""
         if sys.platform == "win32":
-            return _encrypt_dpapi(plaintext)
+            try:
+                return _encrypt_dpapi(plaintext)
+            except Exception:  # noqa: BLE001
+                # DPAPI unavailable (e.g. pywin32 not installed) — fall back to Fernet
+                return _encrypt_fernet(plaintext)
         return _encrypt_fernet(plaintext)
 
     @staticmethod
@@ -110,5 +114,12 @@ class SecretStore:
         if not ciphertext:
             return ""
         if sys.platform == "win32":
-            return _decrypt_dpapi(ciphertext)
+            try:
+                return _decrypt_dpapi(ciphertext)
+            except Exception:  # noqa: BLE001
+                # May be Fernet-encrypted (fallback from a previous session)
+                try:
+                    return _decrypt_fernet(ciphertext)
+                except Exception as exc2:
+                    raise ValueError("invalid ciphertext") from exc2
         return _decrypt_fernet(ciphertext)
