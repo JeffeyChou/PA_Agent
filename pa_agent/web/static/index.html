@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PA Agent</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="toolbar">
+        <div class="brand">PA Agent</div>
+        <label class="field">
+          <span>Source</span>
+          <select id="dataSource"></select>
+        </label>
+        <label class="field">
+          <span>Symbol</span>
+          <input id="symbol" autocomplete="off" />
+        </label>
+        <label class="field compact">
+          <span>Timeframe</span>
+          <select id="timeframe">
+            <option>1m</option>
+            <option>5m</option>
+            <option selected>15m</option>
+            <option>1h</option>
+            <option>4h</option>
+            <option>1d</option>
+          </select>
+        </label>
+        <label class="field compact">
+          <span>Bars</span>
+          <input id="barCount" type="number" min="20" max="5000" step="1" />
+        </label>
+        <button id="subscribeBtn" class="icon-text">Subscribe</button>
+        <button id="fitBtn" class="icon-text">Fit</button>
+        <button id="resumeBtn" class="icon-text">Live</button>
+        <div class="toolbar-spacer"></div>
+        <button id="settingsBtn" class="icon-text">Settings</button>
+      </header>
+
+      <main class="workbench">
+        <section class="chart-region">
+          <canvas id="chartCanvas"></canvas>
+          <div id="gateBanner" class="gate-banner" hidden></div>
+        </section>
+
+        <aside class="side-panel">
+          <div class="action-row">
+            <button id="analyzeBtn" class="primary">Submit</button>
+            <button id="incrementalBtn">Incremental</button>
+            <label class="check"><input id="waitClose" type="checkbox" /> Wait close</label>
+            <label class="check"><input id="keepAnalysis" type="checkbox" /> Keep</label>
+            <button id="cancelBtn" disabled>Cancel</button>
+          </div>
+
+          <nav class="tabs" aria-label="Analysis tabs">
+            <button data-tab="live" class="active">Live</button>
+            <button data-tab="tree">Tree</button>
+            <button data-tab="flow">Flow</button>
+            <button data-tab="decision">Decision</button>
+            <button data-tab="future">Future</button>
+            <button data-tab="raw">Raw</button>
+            <button data-tab="prompt">Prompt</button>
+          </nav>
+
+          <section id="tab-live" class="tab-panel active">
+            <div id="statusLine" class="status-line">Ready</div>
+            <div id="streamLog" class="stream-log"></div>
+          </section>
+          <section id="tab-tree" class="tab-panel"><pre id="treeView"></pre></section>
+          <section id="tab-flow" class="tab-panel"><canvas id="flowCanvas"></canvas></section>
+          <section id="tab-decision" class="tab-panel"><pre id="decisionView"></pre></section>
+          <section id="tab-future" class="tab-panel"><pre id="futureView"></pre></section>
+          <section id="tab-raw" class="tab-panel"><pre id="rawView"></pre></section>
+          <section id="tab-prompt" class="tab-panel"><pre id="promptView"></pre></section>
+
+          <section class="followup">
+            <textarea id="followupText" rows="3" placeholder="Follow-up"></textarea>
+            <button id="followupBtn">Send</button>
+          </section>
+        </aside>
+      </main>
+
+      <footer class="statusbar">
+        <span id="connectionStatus">Disconnected</span>
+        <span id="recordStatus"></span>
+        <span id="retryStatus"></span>
+      </footer>
+    </div>
+
+    <dialog id="settingsDialog">
+      <form method="dialog" class="settings-form">
+        <header>
+          <h2>Settings</h2>
+          <button value="cancel" aria-label="Close">x</button>
+        </header>
+        <div class="settings-grid">
+          <label>Model<input id="setModel" /></label>
+          <label>Base URL<input id="setBaseUrl" /></label>
+          <label>API Key<input id="setApiKey" type="password" autocomplete="off" /></label>
+          <label>Reasoning<select id="setReasoning"><option>low</option><option>medium</option><option>high</option><option>max</option></select></label>
+          <label>Context<input id="setContext" type="number" min="1000" /></label>
+          <label>Confidence<input id="setConfidence" type="number" min="0" max="100" /></label>
+          <label>Retry Max<input id="setRetryMax" type="number" min="0" max="5" /></label>
+          <label>Critic<select id="setCritic"><option value="false">Disabled</option><option value="true">Enabled</option></select></label>
+          <label class="check wide"><input id="setThinking" type="checkbox" /> Thinking</label>
+          <label class="check wide"><input id="setRetryEnabled" type="checkbox" /> Validation retry</label>
+          <label class="check wide"><input id="setNextBar" type="checkbox" /> Next-bar prediction</label>
+        </div>
+        <menu>
+          <button value="cancel">Cancel</button>
+          <button id="saveSettingsBtn" value="default" class="primary">Save</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

@@ -18,6 +18,7 @@ On validation failure, ``validation_retry`` may append a feedback user turn and
 re-call the API (see ``ValidationSettings.retry_*``). Semantic / safety errors
 are not retried; immutable-field cheat detection rejects suspicious retries.
 """
+
 from __future__ import annotations
 
 # Legacy flag kept for tests/docs; retry is governed by ValidationSettings.
@@ -38,8 +39,14 @@ if TYPE_CHECKING:
     from pa_agent.records.pending_writer import PendingWriter
 
 from pa_agent.ai.json_validator import Ok, ValidationError
-from pa_agent.orchestrator.validation_retry import validate_with_retry
 from pa_agent.data.base import KlineFrame
+from pa_agent.orchestrator.harness import (
+    append_harness_event,
+    build_analysis_contract,
+    derive_effective_decision,
+    run_pre_delivery_gate,
+)
+from pa_agent.orchestrator.validation_retry import validate_with_retry
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 from pa_agent.util.timefmt import now_local_ms
@@ -53,6 +60,7 @@ def _latency_ms_label(latency_ms: object) -> str:
         return f"{float(latency_ms):.0f}ms"
     except (TypeError, ValueError):
         return "?"
+
 
 # When the gateway buffers the full reply, emit pseudo-stream chunks to the UI.
 _FALLBACK_STREAM_CHUNK = 48
@@ -103,16 +111,16 @@ def _enrich_stage2_validation_message(err: ValidationError, reply: Any) -> str:
         return err.message or PROVIDER_QUOTA_USER_MESSAGE
     from pa_agent.ai.validation_messages import format_validation_errors
 
-    detail = format_validation_errors(
-        err.invalid_fields, missing_fields=err.missing_fields
-    )
+    detail = format_validation_errors(err.invalid_fields, missing_fields=err.missing_fields)
     content = (getattr(reply, "content", None) or "").strip()
     trunc = _json_truncation_hint(content, err)
     if trunc:
         usage = getattr(reply, "usage", None)
         completion = getattr(usage, "completion_tokens", 0) if usage else 0
         reasoning_len = len(getattr(reply, "reasoning_content", None) or "")
-        msg = f"{err.message}。{trunc} completion_tokens≈{completion}，思考区约 {reasoning_len} 字。"
+        msg = (
+            f"{err.message}。{trunc} completion_tokens≈{completion}，思考区约 {reasoning_len} 字。"
+        )
         return f"{msg}。{detail}" if detail else msg
     if err.category != "d" or (err.raw_text or "").strip():
         return f"{err.message}。{detail}" if detail else err.message
@@ -147,16 +155,16 @@ def _enrich_stage1_validation_message(err: ValidationError, reply: Any) -> str:
         return err.message or PROVIDER_QUOTA_USER_MESSAGE
     from pa_agent.ai.validation_messages import format_validation_errors
 
-    detail = format_validation_errors(
-        err.invalid_fields, missing_fields=err.missing_fields
-    )
+    detail = format_validation_errors(err.invalid_fields, missing_fields=err.missing_fields)
     content = (getattr(reply, "content", None) or "").strip()
     trunc = _json_truncation_hint(content, err)
     if trunc:
         usage = getattr(reply, "usage", None)
         completion = getattr(usage, "completion_tokens", 0) if usage else 0
         reasoning_len = len(getattr(reply, "reasoning_content", None) or "")
-        msg = f"{err.message}。{trunc} completion_tokens≈{completion}，思考区约 {reasoning_len} 字。"
+        msg = (
+            f"{err.message}。{trunc} completion_tokens≈{completion}，思考区约 {reasoning_len} 字。"
+        )
         return f"{msg}。{detail}" if detail else msg
     if err.category != "d" or (err.raw_text or "").strip():
         return f"{err.message}。{detail}" if detail else err.message
@@ -206,6 +214,7 @@ def _build_empty_record(
     ai_provider: dict[str, Any] = {}
     if settings is not None:
         from pa_agent.util.mask_secret import mask_secret
+
         p = settings.provider
         ai_provider = {
             "model": p.model,
@@ -262,19 +271,16 @@ def _build_empty_record(
 def _accumulate_usage(current: dict, reply_usage: Any) -> dict:
     """Merge an AIUsage object into the running usage_total dict."""
     result = dict(current)
-    result["prompt_tokens"] = (
-        result.get("prompt_tokens", 0) + getattr(reply_usage, "prompt_tokens", 0)
+    result["prompt_tokens"] = result.get("prompt_tokens", 0) + getattr(
+        reply_usage, "prompt_tokens", 0
     )
-    result["cached_prompt_tokens"] = (
-        result.get("cached_prompt_tokens", 0)
-        + getattr(reply_usage, "cached_prompt_tokens", 0)
+    result["cached_prompt_tokens"] = result.get("cached_prompt_tokens", 0) + getattr(
+        reply_usage, "cached_prompt_tokens", 0
     )
-    result["completion_tokens"] = (
-        result.get("completion_tokens", 0) + getattr(reply_usage, "completion_tokens", 0)
+    result["completion_tokens"] = result.get("completion_tokens", 0) + getattr(
+        reply_usage, "completion_tokens", 0
     )
-    result["total_tokens"] = (
-        result.get("total_tokens", 0) + getattr(reply_usage, "total_tokens", 0)
-    )
+    result["total_tokens"] = result.get("total_tokens", 0) + getattr(reply_usage, "total_tokens", 0)
     return result
 
 
@@ -374,31 +380,87 @@ class TwoStageOrchestrator:
         """
         # ── Step 1: Build partial record ──────────────────────────────────────
         record = _build_empty_record(frame, self._settings)
+        contract = build_analysis_contract(frame, self._settings)
+        record.analysis_contract = contract.model_dump()
+        run_id = contract.run_id
+
+        def trace(
+            *,
+            kind: str,
+            stage: str,
+            status: str,
+            message: str = "",
+            data: dict[str, Any] | None = None,
+        ) -> None:
+            append_harness_event(
+                record.harness_trace,
+                run_id=run_id,
+                kind=kind,
+                stage=stage,
+                status=status,
+                message=message,
+                data=data,
+            )
+
+        def emit(
+            event: OrchestratorEvent,
+            *,
+            kind: str,
+            stage: str,
+            status: str,
+            message: str = "",
+            data: dict[str, Any] | None = None,
+        ) -> None:
+            trace(kind=kind, stage=stage, status=status, message=message, data=data)
+            on_event(event)
 
         # ── Step 2: Pre-Stage-1 cancel check ─────────────────────────────────
         if cancel_token.is_set():
+            emit(
+                OrchestratorEvent.Cancelled,
+                kind="cancellation",
+                stage="preflight",
+                status="cancelled",
+                message="Analysis was cancelled before Stage 1.",
+            )
             self._pending_writer.save_partial(record, "user_cancelled")
-            on_event(OrchestratorEvent.Cancelled)
             return record
 
         # ── Step 2.5: Preflight data gate (before Stage1Started) ─────────────
         from pa_agent.ai.decision_nodes import check_preflight_data
+
+        trace(kind="preflight", stage="preflight", status="started")
         pf = check_preflight_data(frame)
         if not pf.ok:
-            record = record.model_copy(update={
-                "exception": {
-                    "type": "insufficient_data",
-                    "stage": "preflight",
-                    "failed_check": pf.failed_check,
-                    "message": pf.reason,
+            record = record.model_copy(
+                update={
+                    "exception": {
+                        "type": "insufficient_data",
+                        "stage": "preflight",
+                        "failed_check": pf.failed_check,
+                        "message": pf.reason,
+                    }
                 }
-            })
+            )
+            emit(
+                OrchestratorEvent.InsufficientData,
+                kind="preflight",
+                stage="preflight",
+                status="failed",
+                message=pf.reason,
+                data={"failed_check": pf.failed_check},
+            )
             self._pending_writer.save_partial(record, "insufficient_data")
-            on_event(OrchestratorEvent.InsufficientData)
             return record
+        trace(kind="preflight", stage="preflight", status="passed")
 
         # ── Step 3: Stage 1 started ───────────────────────────────────────────
-        on_event(OrchestratorEvent.Stage1Started)
+        emit(
+            OrchestratorEvent.Stage1Started,
+            kind="stage",
+            stage="stage1",
+            status="started",
+        )
 
         # Resolve analysis mode from settings (default: original)
         analysis_mode = "original"
@@ -420,19 +482,23 @@ class TwoStageOrchestrator:
             messages_s1 = self._assembler.build_stage1(frame, analysis_mode=analysis_mode)
 
         # ── Step 5: Call AI for Stage 1 ───────────────────────────────────────
-        logger.debug("\n" + "="*80)
+        logger.debug("\n" + "=" * 80)
         logger.debug("【Stage 1 发送的完整 Prompt】")
-        logger.debug("="*80)
+        logger.debug("=" * 80)
         for msg in messages_s1:
             role = msg.get("role", "?").upper()
             content = msg.get("content", "")
             logger.debug("\n--- [%s] ---\n%s", role, content)
-        logger.debug("="*80 + "\n")
+        logger.debug("=" * 80 + "\n")
 
         # Notify conversation tab of the prompt being sent
         if on_stage_prompt is not None:
-            s1_system = next((m.get("content", "") for m in messages_s1 if m.get("role") == "system"), "")
-            s1_user = next((m.get("content", "") for m in messages_s1 if m.get("role") == "user"), "")
+            s1_system = next(
+                (m.get("content", "") for m in messages_s1 if m.get("role") == "system"), ""
+            )
+            s1_user = next(
+                (m.get("content", "") for m in messages_s1 if m.get("role") == "user"), ""
+            )
             on_stage_prompt("stage1", s1_system, s1_user)
 
         _thinking, _effort = self._thinking_params()
@@ -474,8 +540,15 @@ class TwoStageOrchestrator:
                         },
                     }
                 )
+                emit(
+                    OrchestratorEvent.Stage1Failed,
+                    kind="stage",
+                    stage="stage1",
+                    status="failed",
+                    message=str(exc),
+                    data={"type": "network_error"},
+                )
                 self._pending_writer.save_partial(record, "network_error")
-                on_event(OrchestratorEvent.Stage1Failed)
                 return record
             raise
 
@@ -493,14 +566,20 @@ class TwoStageOrchestrator:
                     "usage_total": _accumulate_usage(record.usage_total, reply_s1.usage),
                 }
             )
+            emit(
+                OrchestratorEvent.Cancelled,
+                kind="cancellation",
+                stage="stage1",
+                status="cancelled",
+                message="Analysis was cancelled after Stage 1 response.",
+            )
             self._pending_writer.save_partial(record, "user_cancelled")
-            on_event(OrchestratorEvent.Cancelled)
             return record
 
         # ── Step 7: Validate Stage 1 ──────────────────────────────────────────
-        logger.debug("\n" + "="*80)
+        logger.debug("\n" + "=" * 80)
         logger.debug("【Stage 1 AI 完整响应】")
-        logger.debug("="*80)
+        logger.debug("=" * 80)
         logger.debug(reply_s1.content)
         if reply_s1.reasoning_content:
             logger.debug("\n--- [思考过程] ---\n%s", reply_s1.reasoning_content)
@@ -510,7 +589,7 @@ class TwoStageOrchestrator:
             reply_s1.usage.completion_tokens,
             _latency_ms_label(reply_s1.latency_ms),
         )
-        logger.debug("="*80 + "\n")
+        logger.debug("=" * 80 + "\n")
 
         prev_s1: dict[str, Any] | None = None
         if previous_record is not None and int(incremental_new_bar_count or 0) > 0:
@@ -520,7 +599,12 @@ class TwoStageOrchestrator:
 
         def _call_s1_retry(msgs: list[dict]) -> Any:
             nonlocal s1_streamed_reasoning, s1_streamed_content
-            on_event(OrchestratorEvent.Stage1Retry)
+            emit(
+                OrchestratorEvent.Stage1Retry,
+                kind="retry",
+                stage="stage1",
+                status="started",
+            )
             s1_streamed_reasoning = False
             s1_streamed_content = False
             r = self._client.stream_chat(
@@ -583,22 +667,36 @@ class TwoStageOrchestrator:
                     },
                 }
             )
+            emit(
+                OrchestratorEvent.Stage1Failed,
+                kind="validation",
+                stage="stage1",
+                status="failed",
+                message=err_message,
+                data={"category": err.category},
+            )
             self._pending_writer.save_partial(record, f"stage1_{err.category}")
-            on_event(OrchestratorEvent.Stage1Failed)
             return record
 
         # Validation passed — extract the parsed JSON
         assert isinstance(result_s1, Ok)
         stage1_json: dict = result_s1.obj
+        trace(kind="validation", stage="stage1", status="passed")
 
         # ── Step 9: Stage 1 done ──────────────────────────────────────────────
-        on_event(OrchestratorEvent.Stage1Done)
+        emit(OrchestratorEvent.Stage1Done, kind="stage", stage="stage1", status="done")
 
         # ── Step 10: Route strategy files ─────────────────────────────────────
         if callable(self._router) and not hasattr(self._router, "route"):
             strategy_files: list[str] = self._router(stage1_json)
         else:
             strategy_files = self._router.route(stage1_json)
+        trace(
+            kind="routing",
+            stage="routing",
+            status="done",
+            data={"strategy_files": list(strategy_files)},
+        )
 
         # ── Step 11: Load experience entries ──────────────────────────────────
         cycle_position: str = stage1_json.get("cycle_position", "unknown")
@@ -635,12 +733,23 @@ class TwoStageOrchestrator:
                     "usage_total": _accumulate_usage(record.usage_total, reply_s1.usage),
                 }
             )
+            emit(
+                OrchestratorEvent.Cancelled,
+                kind="cancellation",
+                stage="stage2",
+                status="cancelled",
+                message="Analysis was cancelled before Stage 2.",
+            )
             self._pending_writer.save_partial(record, "user_cancelled")
-            on_event(OrchestratorEvent.Cancelled)
             return record
 
         # ── Step 13: Stage 2 started ──────────────────────────────────────────
-        on_event(OrchestratorEvent.Stage2Started)
+        emit(
+            OrchestratorEvent.Stage2Started,
+            kind="stage",
+            stage="stage2",
+            status="started",
+        )
         if on_stage2_files is not None:
             on_stage2_files(list(strategy_files))
 
@@ -657,9 +766,30 @@ class TwoStageOrchestrator:
             _emit_buffered_stream(short_msg, on_stage2_content)
 
             stage2_json = build_stage2_gate_wait_response(stage1_json)
-            on_event(OrchestratorEvent.Stage2Done)
-            logger.info("next_bar_prediction direction=null probs=null/null/null unpredictable=true (gate short-circuit)")
+            emit(
+                OrchestratorEvent.Stage2Done,
+                kind="stage",
+                stage="stage2",
+                status="done",
+                message="Stage 2 short-circuited by Stage 1 gate.",
+            )
+            logger.info(
+                "next_bar_prediction direction=null probs=null/null/null unpredictable=true (gate short-circuit)"
+            )
             usage_total = _accumulate_usage(record.usage_total, reply_s1.usage)
+            gate = run_pre_delivery_gate(
+                stage2_decision=stage2_json,
+                frame=frame,
+                settings=self._settings,
+            )
+            effective = derive_effective_decision(stage2_json, gate)
+            trace(
+                kind="pre_delivery_gate",
+                stage="pre_delivery_gate",
+                status=gate.status,
+                message="Gate evaluated Stage 1 short-circuit decision.",
+                data=gate.model_dump(),
+            )
             record = record.model_copy(
                 update={
                     "stage1_messages": messages_s1,
@@ -675,10 +805,17 @@ class TwoStageOrchestrator:
                     ],
                     "usage_total": usage_total,
                     "exception": None,
+                    "pre_delivery_gate": gate.model_dump(),
+                    "effective_decision": effective,
                 }
             )
+            emit(
+                OrchestratorEvent.RecordSaved,
+                kind="persistence",
+                stage="record",
+                status="saved",
+            )
             self._pending_writer.save_full(record)
-            on_event(OrchestratorEvent.RecordSaved)
             return record
 
         # ── Step 14: Build Stage 2 messages ───────────────────────────────────
@@ -698,19 +835,23 @@ class TwoStageOrchestrator:
         )
 
         # ── Step 15: Call AI for Stage 2 ──────────────────────────────────────
-        logger.debug("\n" + "="*80)
+        logger.debug("\n" + "=" * 80)
         logger.debug("【Stage 2 发送的完整 Prompt】")
-        logger.debug("="*80)
+        logger.debug("=" * 80)
         for msg in messages_s2:
             role = msg.get("role", "?").upper()
             content = msg.get("content", "")
             logger.debug("\n--- [%s] ---\n%s", role, content)
-        logger.debug("="*80 + "\n")
+        logger.debug("=" * 80 + "\n")
 
         # Notify conversation tab of the prompt being sent
         if on_stage_prompt is not None:
-            s2_system = next((m.get("content", "") for m in messages_s2 if m.get("role") == "system"), "")
-            s2_user = next((m.get("content", "") for m in reversed(messages_s2) if m.get("role") == "user"), "")
+            s2_system = next(
+                (m.get("content", "") for m in messages_s2 if m.get("role") == "system"), ""
+            )
+            s2_user = next(
+                (m.get("content", "") for m in reversed(messages_s2) if m.get("role") == "user"), ""
+            )
             on_stage_prompt("stage2", s2_system, s2_user)
 
         s2_streamed_reasoning = False
@@ -760,8 +901,15 @@ class TwoStageOrchestrator:
                         },
                     }
                 )
+                emit(
+                    OrchestratorEvent.Stage2Failed,
+                    kind="stage",
+                    stage="stage2",
+                    status="failed",
+                    message=str(exc),
+                    data={"type": "network_error"},
+                )
                 self._pending_writer.save_partial(record, "network_error")
-                on_event(OrchestratorEvent.Stage2Failed)
                 return record
             raise
 
@@ -790,14 +938,20 @@ class TwoStageOrchestrator:
                     ),
                 }
             )
+            emit(
+                OrchestratorEvent.Cancelled,
+                kind="cancellation",
+                stage="stage2",
+                status="cancelled",
+                message="Analysis was cancelled after Stage 2 response.",
+            )
             self._pending_writer.save_partial(record, "user_cancelled")
-            on_event(OrchestratorEvent.Cancelled)
             return record
 
         # ── Step 17: Validate Stage 2 ─────────────────────────────────────────
-        logger.debug("\n" + "="*80)
+        logger.debug("\n" + "=" * 80)
         logger.debug("【Stage 2 AI 完整响应】")
-        logger.debug("="*80)
+        logger.debug("=" * 80)
         logger.debug(reply_s2.content)
         if reply_s2.reasoning_content:
             logger.debug("\n--- [思考过程] ---\n%s", reply_s2.reasoning_content)
@@ -807,13 +961,18 @@ class TwoStageOrchestrator:
             reply_s2.usage.completion_tokens,
             _latency_ms_label(reply_s2.latency_ms),
         )
-        logger.debug("="*80 + "\n")
+        logger.debug("=" * 80 + "\n")
 
         s2_usage_calls: list[Any] = [getattr(reply_s2, "usage", None)]
 
         def _call_s2_retry(msgs: list[dict]) -> Any:
             nonlocal s2_streamed_reasoning, s2_streamed_content
-            on_event(OrchestratorEvent.Stage2Retry)
+            emit(
+                OrchestratorEvent.Stage2Retry,
+                kind="retry",
+                stage="stage2",
+                status="started",
+            )
             s2_streamed_reasoning = False
             s2_streamed_content = False
             r = self._client.stream_chat(
@@ -888,8 +1047,15 @@ class TwoStageOrchestrator:
                     },
                 }
             )
+            emit(
+                OrchestratorEvent.Stage2Failed,
+                kind="validation",
+                stage="stage2",
+                status="failed",
+                message=err_message,
+                data={"category": err.category},
+            )
             self._pending_writer.save_partial(record, f"stage2_{err.category}")
-            on_event(OrchestratorEvent.Stage2Failed)
             return record
 
         # Validation passed
@@ -898,9 +1064,10 @@ class TwoStageOrchestrator:
         if not _enable_next_bar and isinstance(stage2_json, dict):
             stage2_json = copy.deepcopy(stage2_json)
             stage2_json.pop("next_bar_prediction", None)
+        trace(kind="validation", stage="stage2", status="passed")
 
         # ── Step 19: Stage 2 done ─────────────────────────────────────────────
-        on_event(OrchestratorEvent.Stage2Done)
+        emit(OrchestratorEvent.Stage2Done, kind="stage", stage="stage2", status="done")
 
         # ── Step 19.5: Log next_bar_prediction (R9.3, NFR2.1) ───────────────────
         _pred = stage2_json if isinstance(stage2_json, dict) else {}
@@ -909,7 +1076,9 @@ class TwoStageOrchestrator:
             logger.info("next_bar_prediction omitted (feature disabled)")
         elif isinstance(_nb_pred, dict):
             if _nb_pred.get("unpredictable"):
-                logger.info("next_bar_prediction direction=null probs=null/null/null unpredictable=true")
+                logger.info(
+                    "next_bar_prediction direction=null probs=null/null/null unpredictable=true"
+                )
             else:
                 _probs = _nb_pred.get("probabilities") or {}
                 logger.info(
@@ -927,6 +1096,19 @@ class TwoStageOrchestrator:
             _accumulate_usage_calls(record.usage_total, s1_usage_calls),
             s2_usage_calls,
         )
+        gate = run_pre_delivery_gate(
+            stage2_decision=stage2_json,
+            frame=frame,
+            settings=self._settings,
+        )
+        effective = derive_effective_decision(stage2_json, gate)
+        trace(
+            kind="pre_delivery_gate",
+            stage="pre_delivery_gate",
+            status=gate.status,
+            message="Gate evaluated validated Stage 2 decision.",
+            data=gate.model_dump(),
+        )
         record = record.model_copy(
             update={
                 "stage1_messages": messages_s1,
@@ -942,14 +1124,19 @@ class TwoStageOrchestrator:
                 ],
                 "usage_total": usage_total,
                 "exception": None,
+                "pre_delivery_gate": gate.model_dump(),
+                "effective_decision": effective,
             }
         )
 
         # ── Step 22: Persist full record ──────────────────────────────────────
+        emit(
+            OrchestratorEvent.RecordSaved,
+            kind="persistence",
+            stage="record",
+            status="saved",
+        )
         self._pending_writer.save_full(record)
-
-        # ── Step 23: Record saved event ───────────────────────────────────────
-        on_event(OrchestratorEvent.RecordSaved)
 
         # ── Step 24: Return ───────────────────────────────────────────────────
         return record
@@ -975,9 +1162,7 @@ class TwoStageOrchestrator:
         stage_label: str,
     ) -> Any:
         """Call stream_chat; on connection error, switch to QClaw and retry once."""
-        original_model = (
-            self._settings.provider.model if self._settings is not None else ""
-        )
+        original_model = self._settings.provider.model if self._settings is not None else ""
         tried_qclaw = False
         tried_workbuddy = False
         while True:
@@ -1004,9 +1189,7 @@ class TwoStageOrchestrator:
                         stage_label,
                         exc,
                     )
-                elif not tried_qclaw and self._try_qclaw_fallback(
-                    original_model=original_model
-                ):
+                elif not tried_qclaw and self._try_qclaw_fallback(original_model=original_model):
                     tried_qclaw = True
                     logger.info(
                         "%s network error (%s); applied QClaw provider — retrying",

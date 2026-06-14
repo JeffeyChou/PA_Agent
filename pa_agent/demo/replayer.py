@@ -1,4 +1,5 @@
 """Timed replay of a saved AnalysisRecord through the same UI signals as live analysis."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -126,7 +127,7 @@ class DemoReplayer(QObject):
         return steps
 
     def _emit_finished(self) -> None:
-        decision = self._record.stage2_decision or {}
+        decision = self._record.effective_decision or self._record.stage2_decision or {}
         self.finished.emit(decision if isinstance(decision, dict) else {})
 
     def _run_next(self) -> None:

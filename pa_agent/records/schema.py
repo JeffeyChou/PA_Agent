@@ -6,7 +6,7 @@ alarm payloads, validation errors, and experience entries.
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RecordMeta(BaseModel):
@@ -15,12 +15,14 @@ class RecordMeta(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     timestamp_local_iso: str  # Local time ISO string, used for filename
-    timestamp_local_ms: int   # Local time in milliseconds
+    timestamp_local_ms: int  # Local time in milliseconds
     symbol: str
     timeframe: str
     bar_count: int
-    ai_provider: dict         # Sanitized provider config snapshot (no plaintext API key)
-    decision_stance: str = "conservative"  # conservative | balanced | aggressive | extreme_aggressive
+    ai_provider: dict  # Sanitized provider config snapshot (no plaintext API key)
+    decision_stance: str = (
+        "conservative"  # conservative | balanced | aggressive | extreme_aggressive
+    )
 
 
 class AnalysisRecord(BaseModel):
@@ -29,18 +31,22 @@ class AnalysisRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     meta: RecordMeta
-    kline_data: list[dict]              # Same data as sent to AI
+    kline_data: list[dict]  # Same data as sent to AI
     htf_text: str
     stage1_messages: list[dict]
-    stage1_response: Optional[dict]     # Raw response (includes reasoning_content)
+    stage1_response: Optional[dict]  # Raw response (includes reasoning_content)
     stage1_diagnosis: Optional[dict]
     stage2_messages: list[dict]
     stage2_response: Optional[dict]
     stage2_decision: Optional[dict]
     strategy_files_used: list[str]
     experience_loaded: list[dict]
-    exception: Optional[dict]           # If error occurred: category + debug info
-    usage_total: dict                   # Cumulative usage for audit
+    exception: Optional[dict]  # If error occurred: category + debug info
+    usage_total: dict  # Cumulative usage for audit
+    analysis_contract: Optional[dict] = None
+    harness_trace: list[dict] = Field(default_factory=list)
+    pre_delivery_gate: Optional[dict] = None
+    effective_decision: Optional[dict] = None
 
 
 class FollowupTurn(BaseModel):
@@ -62,8 +68,8 @@ class AlarmPayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    category: str                       # 'a'..'e'
-    stage: str                          # '阶段一-诊断' or '阶段二-决策'
+    category: str  # 'a'..'e'
+    stage: str  # '阶段一-诊断' or '阶段二-决策'
     timestamp_local_iso: str
     raw_text: str
     parse_position: Optional[str]
@@ -81,7 +87,7 @@ class ValidationError(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    category: str                       # 'a', 'b', 'c', or 'd'
+    category: str  # 'a', 'b', 'c', or 'd'
     missing_fields: list[str] = []
     invalid_fields: list[str] = []
     raw_text: str
@@ -95,7 +101,7 @@ class ExperienceEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     filename: str
-    case_type: str                      # 'success' or 'failure'
+    case_type: str  # 'success' or 'failure'
     cycle_position: str
     timestamp_ms: int
-    content: dict                       # Parsed JSON content of the experience file
+    content: dict  # Parsed JSON content of the experience file

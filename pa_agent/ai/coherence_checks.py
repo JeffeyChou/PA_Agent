@@ -509,6 +509,14 @@ def validate_bar_by_bar_vs_features(
                     f"bar_by_bar_summary[{i}].bar_type={declared!r} contradicts "
                     f"program feature K{seq} bar_type={computed!r}"
                 )
+            elif strict and (declared, computed) not in _COMPATIBLE_PAIRS:
+                declared_structural = declared in _STRUCTURAL_TYPES
+                computed_structural = computed in _STRUCTURAL_TYPES
+                if declared_structural != computed_structural:
+                    errors.append(
+                        f"bar_by_bar_summary[{i}].bar_type={declared!r} contradicts "
+                        f"program feature K{seq} bar_type={computed!r}"
+                    )
             continue
     return errors
 

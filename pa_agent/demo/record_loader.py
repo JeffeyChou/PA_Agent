@@ -1,4 +1,5 @@
 """Load pending analysis JSON records for demo replay."""
+
 from __future__ import annotations
 
 import json
@@ -50,11 +51,11 @@ def try_load_analysis_record(path: Path) -> AnalysisRecord | None:
 
 def is_demo_playable(record: AnalysisRecord) -> bool:
     """True when at least one stage result exists for replay."""
-    return bool(record.stage1_diagnosis or record.stage2_decision)
+    return bool(record.stage1_diagnosis or record.effective_decision or record.stage2_decision)
 
 
 def has_flow_viz_payload(record: AnalysisRecord) -> bool:
-    s2 = record.stage2_decision
+    s2 = record.effective_decision or record.stage2_decision
     if not isinstance(s2, dict):
         return False
     return bool(s2.get("decision_trace") or s2.get("terminal"))

@@ -312,6 +312,30 @@ class DecisionPanel(QWidget):
         self._reasoning_edit.setMinimumHeight(120)
         layout.addWidget(self._reasoning_edit, stretch=1)
 
+        self._prediction_group = QWidget()
+        prediction_layout = QVBoxLayout(self._prediction_group)
+        prediction_layout.setContentsMargins(0, 4, 0, 0)
+        prediction_layout.setSpacing(6)
+
+        prediction_title = QLabel("下根K线预期")
+        prediction_title.setStyleSheet("font-weight: bold; color: #58a6ff;")
+        prediction_layout.addWidget(prediction_title)
+
+        self._prediction_direction_label = QLabel()
+        self._prediction_direction_label.setWordWrap(True)
+        self._prediction_direction_label.setStyleSheet(
+            f"font-size: 14px; font-weight: bold; color: {_PREDICTION_UNPREDICTABLE_COLOR};"
+        )
+        prediction_layout.addWidget(self._prediction_direction_label)
+
+        self._prediction_reasoning_edit = QTextEdit()
+        self._prediction_reasoning_edit.setReadOnly(True)
+        self._prediction_reasoning_edit.setObjectName("answerPane")
+        self._prediction_reasoning_edit.setStyleSheet(_REASON_EDIT_CSS)
+        self._prediction_reasoning_edit.setMaximumHeight(110)
+        prediction_layout.addWidget(self._prediction_reasoning_edit)
+        layout.addWidget(self._prediction_group)
+
         self.clear()
 
     def _apply_diag_chip_style(self, label: QLabel, *, color: str) -> None:
@@ -440,6 +464,49 @@ class DecisionPanel(QWidget):
         self._rr_inline_label.setVisible(False)
         self._win_rate_inline_label.setVisible(False)
 
+    def _apply_next_bar_prediction(self, prediction: object) -> None:
+        if not isinstance(prediction, dict):
+            self._prediction_group.setVisible(False)
+            self._prediction_direction_label.setText("")
+            self._prediction_reasoning_edit.clear()
+            return
+
+        reasoning = prediction.get("reasoning")
+        reasoning_text = str(reasoning) if reasoning is not None else ""
+        if bool(prediction.get("unpredictable")):
+            self._prediction_direction_label.setText(_PREDICTION_UNPREDICTABLE_LABEL)
+            self._prediction_direction_label.setStyleSheet(
+                f"font-size: 14px; font-weight: bold; color: {_PREDICTION_UNPREDICTABLE_COLOR};"
+            )
+            self._prediction_reasoning_edit.setPlainText(reasoning_text)
+            self._prediction_group.setVisible(True)
+            return
+
+        probs = prediction.get("probabilities")
+        if not isinstance(probs, dict) or not probs:
+            self._prediction_group.setVisible(False)
+            self._prediction_direction_label.setText("")
+            self._prediction_reasoning_edit.clear()
+            return
+
+        bull = probs.get("bullish", "?")
+        bear = probs.get("bearish", "?")
+        neutral = probs.get("neutral", "?")
+        dominant = _dominant_prediction_direction(probs)
+        if dominant is None:
+            dominant = str(prediction.get("direction") or "").strip().lower() or None
+        color = _PREDICTION_DOMINANT_COLOR.get(
+            dominant or "", _PREDICTION_UNPREDICTABLE_COLOR
+        )
+        self._prediction_direction_label.setText(
+            f"阳 {bull}%  ·  阴 {bear}%  ·  中 {neutral}%"
+        )
+        self._prediction_direction_label.setStyleSheet(
+            f"font-size: 14px; font-weight: bold; color: {color};"
+        )
+        self._prediction_reasoning_edit.setPlainText(reasoning_text)
+        self._prediction_group.setVisible(True)
+
     # ── Public API ────────────────────────────────────────────────────────
 
     def set_decision(
@@ -562,6 +629,7 @@ class DecisionPanel(QWidget):
             )
 
         self._reasoning_edit.setPlainText(str(reasoning) if reasoning else "")
+        self._apply_next_bar_prediction(decision.get("next_bar_prediction"))
 
     def clear(self) -> None:
         self._trend_label.setText("趋势：—")
@@ -591,3 +659,6 @@ class DecisionPanel(QWidget):
         self._trade_reasoning_label.setVisible(False)
 
         self._reasoning_edit.clear()
+        self._prediction_group.setVisible(False)
+        self._prediction_direction_label.setText("")
+        self._prediction_reasoning_edit.clear()

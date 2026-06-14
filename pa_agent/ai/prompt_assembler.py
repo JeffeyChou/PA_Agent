@@ -1,4 +1,5 @@
 """Prompt assembler for Stage 1 (diagnosis) and Stage 2 (decision)."""
+
 from __future__ import annotations
 
 import datetime
@@ -132,15 +133,15 @@ _STAGE2_TAIL_REMINDER = (
     "禁止调用 exec/Python/写文件等工具；算术在 JSON 推理字段内完成。\n"
     "若 token 紧张，优先保证 `content` 有 JSON，可缩短思考。\n"
     "⚠️ 禁止在 content 中只写思考过程或分隔符（如 ---输出JSON---）而不附 JSON——"
-    "这会导致校验直接失败。哪怕只输出最小骨架 {\"decision\":{\"order_type\":\"不下单\",...}} 也比没有强。\n\n"
+    '这会导致校验直接失败。哪怕只输出最小骨架 {"decision":{"order_type":"不下单",...}} 也比没有强。\n\n'
     "【⚠️ 输出前自检 — terminal.outcome 语义规则（在输出 JSON 前逐项确认）：】\n"
     "1. §9.0 和 §10.1 是否都是「否/等待/不适用」？→ 如果是，你根本没有入场方案，\n"
-    "   terminal.outcome **只能是 wait**，terminal.node_id 填最早否定节点（如 \"9.0\"）。\n"
+    '   terminal.outcome **只能是 wait**，terminal.node_id 填最早否定节点（如 "9.0"）。\n'
     "   **例外**：宽通道/区间/通道靠边界、可挂计划型限价单且三价+10.3 可评估时，"
     "§9.0 应判「是」（非否），继续 §10 而非直接 wait。\n"
     "   禁止写 reject — 你没有东西可以拒绝。\n"
     "2. 你有入场方案（entry/stop/target 三价齐全），但 10.3 交易者方程不通过？\n"
-    "   → 这才可以写 terminal.outcome=reject，node_id=\"10.3\"。\n"
+    '   → 这才可以写 terminal.outcome=reject，node_id="10.3"。\n'
     "3. 你有入场方案且 10.3 通过？→ terminal.outcome=trade，node_id 为最终节点。\n"
     "   **禁止**写 action/execute/entry 等自创词，只能是 wait|reject|trade|proceed。\n"
     "4. 限价/突破尚未触发？→ entry_bar.freshness=pending（禁止 limit_order_pending 等自创词）。\n"
@@ -698,7 +699,7 @@ spike | micro_channel | tight_channel | normal_channel | broad_channel | trendin
 # txt files merged into each stage prompt (order preserved)
 COMMON_SYSTEM_STAGE1_TXT_FILES: tuple[str, ...] = (
     "提示词大纲_人设与思维方式.txt",
-    "二元决策.txt",           # unified with Stage 2 for prefix caching; §0–§2 gate subset is included
+    "二元决策.txt",  # unified with Stage 2 for prefix caching; §0–§2 gate subset is included
 )
 COMMON_SYSTEM_STAGE2_TXT_FILES: tuple[str, ...] = (
     "提示词大纲_人设与思维方式.txt",
@@ -793,23 +794,15 @@ def stage2_user_task_txt_files(
         opposite = (
             _CHANNEL_FILE_GROUPS.get("bearish", ())
             if dir_key == "bullish"
-            else _CHANNEL_FILE_GROUPS.get("bullish", ())
-            if dir_key == "bearish"
-            else ()
+            else _CHANNEL_FILE_GROUPS.get("bullish", ()) if dir_key == "bearish" else ()
         )
         opposite_spike = (
             _SPIKE_FILE_GROUPS.get("bearish", ())
             if dir_key == "bullish"
-            else _SPIKE_FILE_GROUPS.get("bullish", ())
-            if dir_key == "bearish"
-            else ()
+            else _SPIKE_FILE_GROUPS.get("bullish", ()) if dir_key == "bearish" else ()
         )
         skip = frozenset((*opposite, *opposite_spike))
-        core = [
-            f
-            for f in routed
-            if f not in skip
-        ]
+        core = [f for f in routed if f not in skip]
         core.extend(STAGE2_BASE_PROMPT_TXT_FILES)
     return list(dict.fromkeys([*core]))
 
@@ -832,6 +825,7 @@ def stage2_prompt_txt_files(
 
 
 # ── PromptAssembler ────────────────────────────────────────────────────────────
+
 
 class PromptAssembler:
     """Builds message lists for Stage 1 and Stage 2 API calls."""
@@ -1047,9 +1041,7 @@ class PromptAssembler:
                 f"record.meta: {getattr(previous_record, 'meta', '<missing>')!r}"
             )
         prev_diag = getattr(previous_record, "stage1_diagnosis", None) or {}
-        if not prev_assistant_content and not (
-            isinstance(prev_diag, dict) and prev_diag
-        ):
+        if not prev_assistant_content and not (isinstance(prev_diag, dict) and prev_diag):
             raise ValueError(
                 f"build_incremental_stage1: previous_record.stage1_response "
                 f"has no 'content' field. "
@@ -1094,10 +1086,10 @@ class PromptAssembler:
         )
 
         return [
-            {"role": "system",    "content": system_content},
-            {"role": "user",      "content": prev_user_content},
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": prev_user_content},
             assistant_turn,
-            {"role": "user",      "content": incremental_user_content},
+            {"role": "user", "content": incremental_user_content},
         ]
 
     def _stage1_pattern_supplement(self) -> str:
@@ -1154,9 +1146,7 @@ class PromptAssembler:
             n_bars_hint = len(frame.bars)
             hint_lines.append(render_three_window_summary(frame, trend_ctx))
             hint_lines.append("")
-            hint_lines.append(
-                "**§2.2 长程背景 vs 近期方向（程序摘要，供 gate_trace 2.2 引用）**"
-            )
+            hint_lines.append("**§2.2 长程背景 vs 近期方向（程序摘要，供 gate_trace 2.2 引用）**")
             hint_lines.append(
                 f"  背景方向（K{n_bars_hint}-K41）≈ {trend_ctx['background_direction']}；"
                 f"交易主方向（近期）≈ {trend_ctx['trading_direction']}；"
@@ -1193,7 +1183,9 @@ class PromptAssembler:
             logger.warning("_render_program_prefill_hint failed: %s", exc)
             return ""
 
-    def _build_stage1_user_prompt(self, frame: KlineFrame, *, analysis_mode: str = "original") -> str:
+    def _build_stage1_user_prompt(
+        self, frame: KlineFrame, *, analysis_mode: str = "original"
+    ) -> str:
         """Build the Stage 1 task turn; stage-specific rules stay out of system."""
         pattern_block = self._stage1_pattern_supplement()
         # In original mode the AI must reason independently — do NOT inject the
@@ -1270,7 +1262,9 @@ class PromptAssembler:
         previous_summary = {
             "meta": previous_record.meta.model_dump(),
             "stage1_diagnosis": previous_record.stage1_diagnosis or {},
-            "stage2_decision": previous_record.stage2_decision or {},
+            "stage2_decision": previous_record.effective_decision
+            or previous_record.stage2_decision
+            or {},
             "strategy_files_used": previous_record.strategy_files_used or [],
         }
         return (
@@ -1285,7 +1279,7 @@ class PromptAssembler:
             '  "incremental_delta": {"new_closed_bars":["K1"],'
             '"changed_fields":["direction","cycle_position"],'
             '"summary":"相对上一轮：新增K1突破区间上沿，方向由中性转偏多"}\n'
-            "- new_closed_bars 长度必须等于「新增已收盘K线」数量（1根则只写 [\"K1\"]）。\n"
+            '- new_closed_bars 长度必须等于「新增已收盘K线」数量（1根则只写 ["K1"]）。\n'
             "- 并在 summary / risk_warning / gate_trace 中说明相对上一轮变化。\n"
             "- gate_result=proceed 时 gate_trace 仍须覆盖 §1.2、§1.3、§2.1、§2.2、§2.5（§1.1/§2.3/§2.4 由程序填充）。\n"
             "- 输出仍必须是完整阶段一 JSON，而不是差异补丁。\n\n"
@@ -1339,7 +1333,9 @@ class PromptAssembler:
         previous_summary = {
             "meta": previous_record.meta.model_dump(),
             "stage1_diagnosis": previous_record.stage1_diagnosis or {},
-            "stage2_decision": previous_record.stage2_decision or {},
+            "stage2_decision": previous_record.effective_decision
+            or previous_record.stage2_decision
+            or {},
             "strategy_files_used": previous_record.strategy_files_used or [],
         }
         return (
@@ -1362,7 +1358,7 @@ class PromptAssembler:
             '  "incremental_delta": {"new_closed_bars":["K1"],'
             '"changed_fields":["direction","cycle_position"],'
             '"summary":"相对上一轮：新增K1突破区间上沿，方向由中性转偏多"}\n'
-            "- new_closed_bars 长度必须等于「新增已收盘K线」数量（1根则只写 [\"K1\"]）。\n"
+            '- new_closed_bars 长度必须等于「新增已收盘K线」数量（1根则只写 ["K1"]）。\n'
             "- 并在 summary / risk_warning / gate_trace 中说明相对上一轮变化。\n"
             "- gate_result=proceed 时 gate_trace 仍须覆盖 §1.2、§1.3、§2.1、§2.2、§2.5（§1.1/§2.3/§2.4 由程序填充）。\n"
             "- 输出仍必须是完整阶段一 JSON，而不是差异补丁。\n\n"
@@ -1414,9 +1410,11 @@ class PromptAssembler:
         if previous_record is None:
             return ""
         # previous_record may be AnalysisRecord or dict-like
-        s2 = getattr(previous_record, "stage2_decision", None)
+        s2 = getattr(previous_record, "effective_decision", None) or getattr(
+            previous_record, "stage2_decision", None
+        )
         if s2 is None and isinstance(previous_record, dict):
-            s2 = previous_record.get("stage2_decision")
+            s2 = previous_record.get("effective_decision") or previous_record.get("stage2_decision")
         if not isinstance(s2, dict):
             return ""
         pred = s2.get("next_bar_prediction")
@@ -1425,10 +1423,7 @@ class PromptAssembler:
 
         unpredictable = bool(pred.get("unpredictable", False))
         if unpredictable:
-            return (
-                "## 上一轮下一根K线预测\n\n"
-                "上一轮标记为不可预测；本轮请独立判断。\n"
-            )
+            return "## 上一轮下一根K线预测\n\n" "上一轮标记为不可预测；本轮请独立判断。\n"
 
         direction = pred.get("direction") or "—"
         probs = pred.get("probabilities") or {}

@@ -1,4 +1,5 @@
 """Pydantic settings models for PA Agent."""
+
 from __future__ import annotations
 from typing import Literal
 
@@ -11,6 +12,7 @@ NormalizationMode = Literal["strict", "lenient"]
 
 class AIProviderSettings(BaseModel):
     """AI provider connection and behaviour settings."""
+
     model_config = ConfigDict(extra="ignore")
 
     model: str = "deepseek-v4-flash"
@@ -24,6 +26,7 @@ class AIProviderSettings(BaseModel):
 
 class PromptSettings(BaseModel):
     """Prompt assembly tuning (accuracy-oriented defaults)."""
+
     model_config = ConfigDict(extra="ignore")
 
     #: When True, Stage 2 loads every strategy .txt (legacy/test behaviour).
@@ -36,6 +39,7 @@ class PromptSettings(BaseModel):
 
 class ValidationSettings(BaseModel):
     """Post-LLM validation behaviour."""
+
     model_config = ConfigDict(extra="ignore")
 
     normalization_mode: NormalizationMode = "lenient"
@@ -53,10 +57,13 @@ class ValidationSettings(BaseModel):
     #: Max retries for category=c semantic errors (subset only).
     retry_max_semantic: int = Field(default=1, ge=0, le=3)
     retry_stage2: bool = True
+    #: Optional read-only critic after deterministic gate passes a trade candidate.
+    trade_critic_enabled: bool = False
 
 
 class GeneralSettings(BaseModel):
     """UI and data-feed general settings."""
+
     model_config = ConfigDict(extra="ignore")
 
     analysis_bar_count: int = Field(default=100, ge=2, le=5000)
@@ -114,6 +121,7 @@ class GeneralSettings(BaseModel):
 
 class Settings(BaseModel):
     """Root settings object persisted to config/settings.json."""
+
     model_config = ConfigDict(extra="ignore")
 
     provider: AIProviderSettings = Field(default_factory=AIProviderSettings)

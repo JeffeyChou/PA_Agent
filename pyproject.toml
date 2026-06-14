@@ -13,6 +13,8 @@ authors = [{ name = "PA Agent Team" }]
 dependencies = [
     "PyQt6>=6.6",
     "pyqtgraph>=0.13",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
     "numpy>=1.26",
     "pandas>=2.2",
     "openai>=1.40",
@@ -38,9 +40,14 @@ dev = [
     "ruff>=0.5",
     "black>=24.4",
 ]
+web = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+]
 
 [project.scripts]
-pa-agent = "pa_agent.main:main"
+pa-agent = "pa_agent.web.launcher:main"
+pa-agent-gui = "pa_agent.main:main"
 
 [tool.setuptools.packages.find]
 include = ["pa_agent*"]
