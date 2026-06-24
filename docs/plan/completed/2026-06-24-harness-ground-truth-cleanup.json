@@ -1,0 +1,194 @@
+{
+  "file_name": "completed/2026-06-24-harness-ground-truth-cleanup.json",
+  "title": "PA Agent harness ground-truth cleanup",
+  "status": "completed",
+  "created": "2026-06-24",
+  "last_updated": "2026-06-24",
+  "owner": "agent",
+  "feature_id": "harness-001",
+  "source_of_truth": {
+    "handoff_section": "SESSION_HANDOFF.md#current-state",
+    "architecture_context": "ARCHITECTURE.md",
+    "handoff_context": "SESSION_HANDOFF.md"
+  },
+  "overview": {
+    "problem": "Imported root harness files described an unrelated project and made PA Agent restart checks misleading.",
+    "target_behavior": "Root harness docs, plan template, and init.sh describe and validate the PA Agent repository.",
+    "current_step": 4
+  },
+  "scope": {
+    "in_scope": [
+      "Root harness docs",
+      "docs/plan layout and template",
+      "init.sh local harness checks",
+      ".gitignore rule for nested worktrees"
+    ],
+    "out_of_scope": [
+      "Runtime trading-analysis behavior",
+      "GUI behavior",
+      "FastAPI behavior",
+      "Prompt, schema, and settings model behavior"
+    ]
+  },
+  "dependencies": {
+    "repo_paths": [
+      "AGENTS.md",
+      "ARCHITECTURE.md",
+      "SESSION_HANDOFF.md",
+      "EVALUATION_RUBRIC.md",
+      "LESSON_PREFERENCE.md",
+      "docs/plan/",
+      "init.sh",
+      ".gitignore"
+    ],
+    "external_systems": [],
+    "credentials_or_local_state": [
+      "No credentials or private runtime records are required."
+    ],
+    "open_decisions": []
+  },
+  "steps": [
+    {
+      "id": 1,
+      "status": "completed",
+      "description": "Inspect the imported harness files and PA Agent repository truth.",
+      "expected_changes": [],
+      "verification": []
+    },
+    {
+      "id": 2,
+      "status": "completed",
+      "description": "Replace wrong-project harness docs and refactor plan layout.",
+      "expected_changes": [
+        "PA Agent-specific root harness docs",
+        "active/blocked/completed plan folders",
+        "Updated plan template"
+      ],
+      "verification": [
+        "python3 -m json.tool docs/plan/activated-plan-template.json"
+      ]
+    },
+    {
+      "id": 3,
+      "status": "completed",
+      "description": "Replace init.sh with PA Agent local checks and ignore nested worktrees.",
+      "expected_changes": [
+        "PA Agent local harness validation script",
+        ".gitignore /worktree-*/ rule"
+      ],
+      "verification": [
+        "bash -n init.sh",
+        "./init.sh"
+      ]
+    },
+    {
+      "id": 4,
+      "status": "completed",
+      "description": "Record verification, update handoff, and move this plan to completed.",
+      "expected_changes": [
+        "SESSION_HANDOFF.md verified state",
+        "docs/plan/completed/2026-06-24-harness-ground-truth-cleanup.json"
+      ],
+      "verification": [
+        "git status --short"
+      ]
+    }
+  ],
+  "verification": {
+    "baseline": [
+      "./init.sh"
+    ],
+    "required": [
+      "bash -n init.sh",
+      "python3 -m json.tool docs/plan/activated-plan-template.json",
+      "./init.sh"
+    ],
+    "optional": [
+      "QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/test_harness.py tests/unit/test_web_api.py -q"
+    ],
+    "skipped": [
+      {
+        "command": "RUN_TESTS=1 ./init.sh",
+        "reason": "The optional unit/property suite runs under offscreen Qt but currently has existing app-level failures unrelated to this harness-doc cleanup.",
+        "follow_up": "Fix the failing application tests separately, then rerun."
+      },
+      {
+        "command": "RUN_LINT=1 ./init.sh",
+        "reason": "The optional lint gate currently reports existing source/test lint drift unrelated to this harness-doc cleanup.",
+        "follow_up": "Run a dedicated lint cleanup before making lint a required gate."
+      },
+      {
+        "command": "RUN_INTEGRATION=1 ./init.sh",
+        "reason": "Not required for harness/documentation changes and may require a suitable local GUI/data environment.",
+        "follow_up": "Run before completing changes that alter integration behavior."
+      },
+      {
+        "command": "RUN_E2E=1 ./init.sh and RUN_LIVE=1 ./init.sh",
+        "reason": "Not required for harness/documentation changes; live checks require external services and credentials.",
+        "follow_up": "Run only when changing GUI workflows or live-provider/data-source behavior."
+      }
+    ]
+  },
+  "evidence": {
+    "commands_run": [
+      {
+        "command": "./init.sh",
+        "status": "passed",
+        "summary": "Required artifact, plan layout, whitespace, shell syntax, nested worktree ignore, and Python import smoke checks passed."
+      },
+      {
+        "command": "QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/test_decision_panel.py -q",
+        "status": "passed",
+        "summary": "Confirmed offscreen Qt prevents widget-test abort for the local pytest toggle."
+      },
+      {
+        "command": "QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/test_harness.py tests/unit/test_web_api.py -q",
+        "status": "passed",
+        "summary": "11 targeted harness/web tests passed."
+      },
+      {
+        "command": "RUN_TESTS=1 ./init.sh",
+        "status": "failed",
+        "summary": "Offscreen Qt avoided aborts, but the existing unit/property suite reported 31 failures unrelated to this docs/harness cleanup."
+      },
+      {
+        "command": "RUN_LINT=1 ./init.sh",
+        "status": "failed",
+        "summary": "Existing lint drift reported 3603 ruff findings."
+      }
+    ],
+    "artifacts": [
+      "docs/plan/completed/2026-06-24-harness-ground-truth-cleanup.json"
+    ],
+    "logs": [],
+    "manual_checks": [
+      "Confirmed worktree-dev-dispatch-qt/ is ignored by the root repo."
+    ]
+  },
+  "progress_log": [
+    {
+      "date": "2026-06-24",
+      "entry": "Plan created after confirming imported harness docs came from an unrelated project.",
+      "status": "active"
+    },
+    {
+      "date": "2026-06-24",
+      "entry": "Replaced root harness docs, refactored docs/plan, converted init.sh, and added focused nested-worktree ignore policy.",
+      "status": "completed"
+    },
+    {
+      "date": "2026-06-24",
+      "entry": "Required harness validation passed; broad optional test/lint failures were recorded as existing follow-up work.",
+      "status": "completed"
+    }
+  ],
+  "completion": {
+    "resolved": true,
+    "resolved_date": "2026-06-24",
+    "summary": "The root workflow harness now reflects PA Agent ground truth and the local startup gate validates PA Agent artifacts instead of unrelated project files.",
+    "follow_up": [
+      "Address existing unit/property test failures separately.",
+      "Address existing lint drift before treating RUN_LINT=1 as a required gate."
+    ]
+  }
+}

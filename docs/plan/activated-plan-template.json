@@ -1,0 +1,112 @@
+{
+  "file_name": "active/YYYY-MM-DD-short-topic.json",
+  "title": "Short descriptive plan title",
+  "status": "template",
+  "created": "YYYY-MM-DD",
+  "last_updated": "YYYY-MM-DD",
+  "owner": "agent",
+  "feature_id": "feature-or-task-id-from-SESSION_HANDOFF.md",
+  "source_of_truth": {
+    "handoff_section": "SESSION_HANDOFF.md#open-work",
+    "architecture_context": "ARCHITECTURE.md",
+    "handoff_context": "SESSION_HANDOFF.md"
+  },
+  "overview": {
+    "problem": "What needs to change and why.",
+    "target_behavior": "Observable behavior that will be true when this plan is complete.",
+    "current_step": 1
+  },
+  "scope": {
+    "in_scope": [
+      "PA Agent files, modules, or behaviors this plan is allowed to change."
+    ],
+    "out_of_scope": [
+      "Related work that should not be changed by this plan."
+    ]
+  },
+  "dependencies": {
+    "repo_paths": [
+      "Relevant source, test, prompt, config, record, or documentation paths."
+    ],
+    "external_systems": [
+      "AI providers, MT5, TradingView, yfinance, AkShare/East Money, display environment, or other external requirements."
+    ],
+    "credentials_or_local_state": [
+      "Required API keys, settings, local terminals, records, or logs. Do not commit private values."
+    ],
+    "open_decisions": [
+      "Questions that must be resolved before implementation can safely finish."
+    ]
+  },
+  "steps": [
+    {
+      "id": 1,
+      "status": "pending",
+      "description": "Inspect current state and confirm baseline verification.",
+      "expected_changes": [],
+      "verification": [
+        "./init.sh"
+      ]
+    },
+    {
+      "id": 2,
+      "status": "pending",
+      "description": "Implement the scoped change.",
+      "expected_changes": [
+        "List concrete files, modules, prompts, docs, or tests expected to change."
+      ],
+      "verification": []
+    },
+    {
+      "id": 3,
+      "status": "pending",
+      "description": "Run required verification and update durable artifacts.",
+      "expected_changes": [
+        "ARCHITECTURE.md only if stable layers or dependency boundaries changed.",
+        "SESSION_HANDOFF.md if work remains unresolved or verification was skipped.",
+        "LESSON_PREFERENCE.md if a durable lesson or preference was learned."
+      ],
+      "verification": [
+        "./init.sh",
+        "Feature-specific pytest, lint, GUI, web API, or live-service checks from SESSION_HANDOFF.md or this plan"
+      ]
+    }
+  ],
+  "verification": {
+    "baseline": [
+      "./init.sh"
+    ],
+    "required": [
+      "List every command that must pass before this plan can be completed."
+    ],
+    "optional": [
+      "List checks that are useful but environment-dependent, such as e2e, live provider, MT5, TradingView, or GUI manual smoke."
+    ],
+    "skipped": [
+      {
+        "command": "Command not run.",
+        "reason": "Why it was skipped.",
+        "follow_up": "Where or when it should be run."
+      }
+    ]
+  },
+  "evidence": {
+    "commands_run": [],
+    "artifacts": [],
+    "logs": [],
+    "manual_checks": []
+  },
+  "progress_log": [
+    {
+      "date": "YYYY-MM-DD",
+      "entry": "Template created.",
+      "status": "template"
+    }
+  ],
+  "completion": {
+    "resolved": false,
+    "resolved_date": "",
+    "summary": "",
+    "follow_up": []
+  }
+}
