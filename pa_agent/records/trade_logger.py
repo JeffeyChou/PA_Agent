@@ -2,7 +2,7 @@
 
 When stage-2 produces an order (限价单 / 突破单 / 市价单), this module:
   1. Appends a rich row to  trade_records/<symbol>_<timeframe>.csv
-  2. Renders a K-line + EMA20 chart for the last ≤100 bars and saves it as a
+  2. Renders a K-line + EMA20 chart for the last ≤50 bars and saves it as a
      PNG next to the CSV.
 
 File naming convention
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _TRADE_RECORDS_DIR = Path("trade_records")
 
 # Maximum bars to show in the chart image
-_CHART_MAX_BARS = 100
+_CHART_MAX_BARS = 50
 
 # ── CSV column definitions ─────────────────────────────────────────────────────
 
@@ -46,6 +46,7 @@ _CSV_FIELDNAMES = [
     "entry_price",
     "stop_loss_price",
     "take_profit_price",
+    "take_profit_price_2",
     "entry_rule",
     "entry_basis_bar",
     "entry_basis_extreme",
@@ -89,6 +90,11 @@ _CSV_FIELDNAMES = [
     "terminal_label",
     # ── Decision trace summary ────────────────────────────────────────────────
     "decision_trace_summary",
+    # ── Continuity audit (vs previous CSV row) ────────────────────────────────
+    "prev_plan_relation",
+    "prev_plan_invalidated",
+    "prev_plan_entry",
+    "bars_since_prev_plan",
     # ── Image path ────────────────────────────────────────────────────────────
     "chart_image",
 ]
@@ -150,13 +156,18 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
                   entry_price: float | None = None,
                   stop_loss_price: float | None = None,
                   take_profit_price: float | None = None,
-                  order_direction: str = "") -> bool:
+                  take_profit_price_2: float | None = None,
+                  order_direction: str = "",
+                  order_type: str = "",
+                  diagnosis_confidence: str = "",
+                  trade_confidence: str = "",
+                  estimated_win_rate: str = "") -> bool:
     """Draw a candlestick + EMA20 chart and save to *image_path*.
 
     Returns True on success, False if matplotlib is unavailable.
     bars_newest_first: list of KlineBar (or dict with open/high/low/close/ts_open/seq).
     ema20_newest_first: aligned EMA20 values (NaN for warm-up bars).
-    entry_price / stop_loss_price / take_profit_price: optional price levels drawn
+    entry_price / stop_loss_price / take_profit_price / take_profit_price_2: optional price levels drawn
     as horizontal dashed lines extending into the right-side margin.
     """
     try:
@@ -254,18 +265,62 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
         color="#e6edf3", fontsize=10, pad=8,
     )
 
+    # ── Order type badge (top-left corner) ────────────────────────────────────
+    if order_type:
+        _ot = str(order_type).strip()
+        _ot_colors = {
+            "限价单": "#fbbf24",   # amber
+            "突破单": "#a78bfa",   # purple
+            "市价单": "#34d399",   # teal
+        }
+        _ot_color = _ot_colors.get(_ot, "#8b949e")
+        ax.text(
+            0.01, 0.97, _ot,
+            transform=ax.transAxes,
+            color=_ot_color, fontsize=9, fontweight="bold",
+            va="top", ha="left",
+            bbox=dict(facecolor="#161b22", edgecolor=_ot_color,
+                      linewidth=1.2, alpha=0.9, pad=3, boxstyle="round,pad=0.3"),
+            zorder=10,
+        )
+
+    # ── Confidence badges (top-left, right of order type) ─────────────────────
+    # Show diagnosis_confidence / trade_confidence / estimated_win_rate as a
+    # compact info row just below the order-type badge.
+    _conf_parts = []
+    if diagnosis_confidence:
+        _conf_parts.append(f"诊断置信 {diagnosis_confidence}")
+    if trade_confidence:
+        _conf_parts.append(f"交易置信 {trade_confidence}")
+    if estimated_win_rate:
+        _conf_parts.append(f"胜率 {estimated_win_rate}")
+    if _conf_parts:
+        _conf_text = "   ".join(_conf_parts)
+        ax.text(
+            0.01, 0.905, _conf_text,
+            transform=ax.transAxes,
+            color="#cbd5e1", fontsize=8,
+            va="top", ha="left",
+            bbox=dict(facecolor="#161b22", edgecolor="#30363d",
+                      linewidth=0.8, alpha=0.85, pad=3, boxstyle="round,pad=0.3"),
+            zorder=10,
+        )
+
     # ── Entry / SL / TP horizontal lines ──────────────────────────────────────
     # Determine bull/bear from order_direction for colour defaults
     _is_long = "short" not in order_direction.lower() and "做空" not in order_direction
     _ENTRY_COLOR = "#60a5fa"   # blue
     _TP_COLOR    = "#4ade80"   # green
+    _TP2_COLOR   = "#86efac"   # lighter green
     _SL_COLOR    = "#f87171"   # red
 
     _price_lines: list[tuple[float, str, str]] = []  # (price, color, label)
     if entry_price is not None:
         _price_lines.append((entry_price, _ENTRY_COLOR, f"入场  {entry_price}"))
     if take_profit_price is not None:
-        _price_lines.append((take_profit_price, _TP_COLOR, f"止盈  {take_profit_price}"))
+        _price_lines.append((take_profit_price, _TP_COLOR, f"TP1  {take_profit_price}"))
+    if take_profit_price_2 is not None:
+        _price_lines.append((take_profit_price_2, _TP2_COLOR, f"TP2  {take_profit_price_2}"))
     if stop_loss_price is not None:
         _price_lines.append((stop_loss_price, _SL_COLOR, f"止损  {stop_loss_price}"))
 
@@ -347,7 +402,10 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
                                      linestyle="--", label="入场"))
     if take_profit_price is not None:
         legend_handles.append(Line2D([0], [0], color=_TP_COLOR, linewidth=1.0,
-                                     linestyle="--", label="止盈"))
+                                     linestyle="--", label="TP1"))
+    if take_profit_price_2 is not None:
+        legend_handles.append(Line2D([0], [0], color=_TP2_COLOR, linewidth=1.0,
+                                     linestyle="--", label="TP2"))
     if stop_loss_price is not None:
         legend_handles.append(Line2D([0], [0], color=_SL_COLOR, linewidth=1.0,
                                      linestyle="--", label="止损"))
@@ -380,6 +438,7 @@ def save_trade_record(
     meta_timeframe: str,
     decision_stance: str,
     model_name: str,
+    structure_flip_cooldown_bars: int = 3,
 ) -> None:
     """Append one row to the trade CSV and generate the chart image.
 
@@ -395,6 +454,7 @@ def save_trade_record(
             meta_timeframe=meta_timeframe,
             decision_stance=decision_stance,
             model_name=model_name,
+            structure_flip_cooldown_bars=structure_flip_cooldown_bars,
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("save_trade_record failed: %s", exc, exc_info=True)
@@ -410,6 +470,7 @@ def _save_trade_record_impl(
     meta_timeframe: str,
     decision_stance: str,
     model_name: str,
+    structure_flip_cooldown_bars: int = 3,
 ) -> None:
     s1 = stage1_diagnosis or {}
     dec = decision_inner or {}
@@ -448,7 +509,12 @@ def _save_trade_record_impl(
                 entry_price=_parse_sr_price(dec.get("entry_price")),
                 stop_loss_price=_parse_sr_price(dec.get("stop_loss_price")),
                 take_profit_price=_parse_sr_price(dec.get("take_profit_price")),
+                take_profit_price_2=_parse_sr_price(dec.get("take_profit_price_2")),
                 order_direction=str(dec.get("order_direction") or ""),
+                order_type=str(dec.get("order_type") or ""),
+                diagnosis_confidence=str(dec.get("diagnosis_confidence") or ""),
+                trade_confidence=str(dec.get("trade_confidence") or ""),
+                estimated_win_rate=str(dec.get("estimated_win_rate") or ""),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("chart render failed: %s", exc)
@@ -457,6 +523,19 @@ def _save_trade_record_impl(
     trace = stage2_full.get("decision_trace") or []
     trace_summary = " | ".join(
         f"{t.get('node_id','')}:{t.get('answer','')}" for t in trace if isinstance(t, dict)
+    )
+
+    from pa_agent.ai.decision_continuity import (
+        audit_relation_fields,
+        load_last_trade_csv_row,
+    )
+
+    prev_csv_row = load_last_trade_csv_row(meta_symbol, meta_timeframe)
+    audit = audit_relation_fields(
+        prev_csv_row,
+        dec,
+        frame=frame,
+        cooldown_bars=structure_flip_cooldown_bars,
     )
 
     # ── Build CSV row ─────────────────────────────────────────────────────────
@@ -472,6 +551,7 @@ def _save_trade_record_impl(
         "entry_price": _get(dec, "entry_price"),
         "stop_loss_price": _get(dec, "stop_loss_price"),
         "take_profit_price": _get(dec, "take_profit_price"),
+        "take_profit_price_2": _get(dec, "take_profit_price_2"),
         "entry_rule": _get(dec, "entry_rule"),
         "entry_basis_bar": _get(dec, "entry_basis_bar"),
         "entry_basis_extreme": _get(dec, "entry_basis_extreme"),
@@ -516,15 +596,31 @@ def _save_trade_record_impl(
 
         "decision_trace_summary": trace_summary,
 
+        "prev_plan_relation": audit.get("prev_plan_relation", ""),
+        "prev_plan_invalidated": audit.get("prev_plan_invalidated", ""),
+        "prev_plan_entry": audit.get("prev_plan_entry", ""),
+        "bars_since_prev_plan": audit.get("bars_since_prev_plan", ""),
+
         "chart_image": image_filename if chart_written else "",
     }
 
-    # ── Write CSV (create with header if new) ─────────────────────────────────
-    write_header = not csv_path.exists()
-    with open(csv_path, "a", newline="", encoding="utf-8-sig") as f:
+    # ── Write CSV (rewrite with unified header for schema migrations) ─────────
+    existing_rows: list[dict[str, str]] = []
+    if csv_path.exists():
+        try:
+            with open(csv_path, encoding="utf-8-sig", newline="") as f:
+                existing_rows = list(csv.DictReader(f))
+        except OSError:
+            existing_rows = []
+    merged_row = {k: str(row.get(k, "")) for k in _CSV_FIELDNAMES}
+    for k, v in row.items():
+        if k in _CSV_FIELDNAMES:
+            merged_row[k] = "" if v is None else str(v)
+    existing_rows.append(merged_row)
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=_CSV_FIELDNAMES, extrasaction="ignore")
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
+        writer.writeheader()
+        for r in existing_rows:
+            writer.writerow({k: r.get(k, "") for k in _CSV_FIELDNAMES})
 
     logger.info("Trade record appended: %s", csv_path)

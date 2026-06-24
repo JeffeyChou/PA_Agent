@@ -25,16 +25,6 @@ from PyQt6.QtGui import QDesktopServices, QFont
 
 from pa_agent.config.settings import Settings, save_settings
 from pa_agent.config.paths import SETTINGS_JSON_PATH
-from pa_agent.ai.qclaw_connector import (
-    detect_qclaw,
-    is_openclaw_model,
-    should_use_qclaw_provider,
-)
-from pa_agent.ai.workbuddy_connector import (
-    detect_workbuddy,
-    is_openclaw_wb_model,
-    should_use_workbuddy_provider,
-)
 
 _API_KEY_HELP_URL = "https://my.feishu.cn/wiki/CUV1wUKWxiQGhekQdRvcZQQ2ncf"
 _AGENT_TUTORIAL_URL = (
@@ -298,7 +288,7 @@ class SettingsDialog(QDialog):
         )
         self._enable_next_bar_check.blockSignals(False)
         self._decision_conf_threshold_spin.setValue(
-            int(getattr(g, "decision_confidence_threshold", 60))
+            int(getattr(g, "decision_confidence_threshold", 40))
         )
         self._last_symbol_edit.setText(g.last_symbol)
         self._last_timeframe_edit.setText(g.last_timeframe)
@@ -314,66 +304,29 @@ class SettingsDialog(QDialog):
             getattr(g, "decision_flow_play_seconds", 50)
         )
         self._flow_default_zoom_spin.setValue(
-            int(getattr(g, "decision_flow_default_zoom_pct", 500))
+            int(getattr(g, "decision_flow_default_zoom_pct", 600))
         )
 
     @staticmethod
     def _validate_provider_fields(model: str, base_url: str) -> str | None:
         """Return user-facing error text, or None if fields look consistent."""
-        if is_openclaw_model(model) or should_use_qclaw_provider(model, base_url):
-            return None
-        if is_openclaw_wb_model(model) or should_use_workbuddy_provider(model, base_url):
-            return None
         if model.startswith(("http://", "https://")) and not base_url.startswith(
             ("http://", "https://")
         ):
             return (
                 "「模型」与「Base URL」似乎填反了：\n"
                 "• 模型应填模型名，如 deepseek-v4-pro 或 claude-sonnet-4-6\n"
-                "• 使用 QClaw 时模型填 openclaw（或 openclaw/main）\n"
-                "• 使用 WorkBuddy 时模型填 openclaw_wb\n"
                 "• Base URL 应填接口地址，如 https://api.deepseek.com"
             )
         if base_url.startswith(("http://", "https://")):
             return None
         if not base_url:
-            if detect_qclaw():
-                return (
-                    "请填写 Base URL，或使用 QClaw/WorkBuddy：\n"
-                    "• 模型填 openclaw → 使用 QClaw（保存时自动配置本地网关）\n"
-                    "• 模型填 openclaw_wb → 使用 WorkBuddy（保存时自动配置）"
-                )
-            if detect_workbuddy():
-                return (
-                    "请填写 Base URL，或使用 WorkBuddy：\n"
-                    "• 模型填 openclaw_wb（保存时自动配置 WorkBuddy 端点）"
-                )
             return "请填写 Base URL（API 接口地址）。"
         return (
             f"Base URL 不是有效网址（当前：{base_url}）。\n"
             "DeepSeek 示例：https://api.deepseek.com\n"
             "PackyAPI 示例：https://www.packyapi.com/v1\n"
-            "MiMo 示例：https://api.xiaomimimo.com/v1\n"
-            "QClaw：模型填 openclaw 后点保存（自动配置本地网关）\n"
-            "WorkBuddy：模型填 openclaw_wb 后点保存（自动配置 WorkBuddy）"
-        )
-
-    def _apply_qclaw_provider(self, *, preferred_model: str = "") -> str | None:
-        """Detect QClaw and write provider fields. Returns error text, or None."""
-        from pa_agent.ai.qclaw_connector import apply_qclaw_provider_to_settings
-
-        return apply_qclaw_provider_to_settings(
-            self._settings,
-            preferred_model=preferred_model or None,
-        )
-
-    def _apply_workbuddy_provider(self, *, preferred_model: str = "") -> str | None:
-        """Detect WorkBuddy and write provider fields. Returns error text, or None."""
-        from pa_agent.ai.workbuddy_connector import apply_workbuddy_provider_to_settings
-
-        return apply_workbuddy_provider_to_settings(
-            self._settings,
-            preferred_model=preferred_model or None,
+            "MiMo 示例：https://api.xiaomimimo.com/v1"
         )
 
     def _on_save(self) -> None:
@@ -382,30 +335,19 @@ class SettingsDialog(QDialog):
 
         model = self._model_edit.text().strip()
         base_url = self._base_url_edit.text().strip()
+        api_key = self._api_key_edit.text().strip()
 
-        # QClaw (openclaw) before WorkBuddy — stale copilot base_url must not steal routing.
-        if should_use_qclaw_provider(model, base_url):
-            qclaw_err = self._apply_qclaw_provider(preferred_model=model)
-            if qclaw_err:
-                QMessageBox.warning(self, "QClaw 配置异常", qclaw_err)
-                return
-        elif should_use_workbuddy_provider(model, base_url):
-            wb_err = self._apply_workbuddy_provider(preferred_model=model)
-            if wb_err:
-                QMessageBox.warning(self, "WorkBuddy 配置异常", wb_err)
-                return
-        else:
-            field_err = self._validate_provider_fields(model, base_url)
-            if field_err:
-                QMessageBox.warning(self, "AI 提供商配置有误", field_err)
-                return
+        field_err = self._validate_provider_fields(model, base_url)
+        if field_err:
+            QMessageBox.warning(self, "AI 提供商配置有误", field_err)
+            return
 
-            p.model = model
-            p.base_url = base_url
-            p.api_key = self._api_key_edit.text()
-            p.thinking = self._thinking_check.isChecked()
-            p.reasoning_effort = self._reasoning_effort_combo.currentText()  # type: ignore[assignment]
-            # context_window is no longer editable in UI; use code-level default
+        p.model = model
+        p.base_url = base_url
+        p.api_key = api_key
+
+        p.thinking = self._thinking_check.isChecked()
+        p.reasoning_effort = self._reasoning_effort_combo.currentText()  # type: ignore[assignment]
 
         g.analysis_bar_count = self._analysis_bar_count_spin.value()
         g.refresh_interval_ms = self._refresh_interval_spin.value()
@@ -475,7 +417,7 @@ class SettingsDialog(QDialog):
             "获取无限Token方法需付费49.9元，付费后你将获得<br>"
             "Deepseek V4 Pro/GLM5.1/Kimi2.6等\"满血\"模型的无限分析方法<br>"
             "注意无限Token只支持使用这个分析软件<br>"
-            "如果你愿意付费，请联系QQ：564020069<br><br>"
+            "如果你愿意付费，请联系QQ：564020069（付费后提供远程协助部署安装服务）<br><br>"
             "如果你不愿意付费，你可以用自己的模型api，如果你不知道模型api是什么<br>"
             "可以直接跟龙虾说：<br>"
             "PA_Agent这个程序的模型api有什么作用，该怎么填？<br>"

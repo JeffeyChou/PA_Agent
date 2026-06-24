@@ -12,7 +12,6 @@ from pa_agent.ai.deepseek_client import (
     CancelledError,
     _completion_max_tokens,
     _is_deepseek_model,
-    _openclaw_agent_request_extra,
 )
 
 
@@ -63,7 +62,7 @@ def test_chat_does_not_send_forbidden_params():
 
 
 def test_chat_extra_body_thinking_enabled():
-    """extra_body must contain thinking.type=enabled and reasoning_effort."""
+    """DeepSeek thinking uses adaptive output_config and reasoning_effort."""
     settings = _make_settings()
     settings.base_url = "https://api.deepseek.com"
     settings.model = "deepseek-v4-pro"
@@ -80,7 +79,8 @@ def test_chat_extra_body_thinking_enabled():
 
     call_kwargs = mock_openai.return_value.chat.completions.create.call_args
     kwargs = call_kwargs.kwargs
-    assert kwargs["extra_body"]["thinking"]["type"] == "enabled"
+    assert kwargs["extra_body"]["thinking"]["type"] == "adaptive"
+    assert kwargs["extra_body"]["output_config"] == {"effort": "max"}
     assert kwargs["reasoning_effort"] == "max"
 
 
@@ -94,6 +94,7 @@ def test_completion_max_tokens_deepseek_cap():
 def test_completion_max_tokens_packy_claude_cap():
     settings = _make_settings()
     settings.base_url = "https://www.packyapi.com/v1"
+    settings.model = "claude-sonnet-4-6"
     extra_body = {"thinking": {"type": "enabled", "budget_tokens": 127_999}}
     assert _completion_max_tokens(settings, extra_body=extra_body, effort="max") == 128_000
 
@@ -149,6 +150,7 @@ def test_chat_kkai_sends_thinking_object_not_reasoning_effort():
     """KKAI Claude: thinking budget in extra_body; reasoning_effort rejected upstream."""
     settings = _make_settings()
     settings.base_url = "https://api.kkone.vip/v1"
+    settings.model = "claude-opus-4-5"
     settings.thinking = True
     settings.reasoning_effort = "high"
     client = DeepSeekClient(settings)
@@ -161,13 +163,14 @@ def test_chat_kkai_sends_thinking_object_not_reasoning_effort():
         client.chat([{"role": "user", "content": "hi"}])
 
     kwargs = mock_openai.return_value.chat.completions.create.call_args.kwargs
-    assert kwargs["extra_body"]["thinking"] == {"type": "enabled", "budget_tokens": 999_998}
+    assert kwargs["extra_body"]["thinking"] == {"type": "enabled", "budget_tokens": 524_287}
     assert "reasoning_effort" not in kwargs
 
 
 def test_chat_kkai_thinking_off_sends_no_thinking_params():
     settings = _make_settings()
     settings.base_url = "https://api.kkone.vip/v1"
+    settings.model = "claude-opus-4-5"
     settings.thinking = False
     client = DeepSeekClient(settings)
 
@@ -226,6 +229,7 @@ def test_chat_yunwu_thinking_off_sends_nothing():
 def test_stream_kkai_passes_thinking_extra_body():
     settings = _make_settings()
     settings.base_url = "https://api.kkone.vip/v1"
+    settings.model = "claude-opus-4-5"
     settings.thinking = True
     settings.reasoning_effort = "medium"
     client = DeepSeekClient(settings)
@@ -261,7 +265,7 @@ def test_stream_kkai_passes_thinking_extra_body():
         )
 
     kwargs = mock_openai.return_value.chat.completions.create.call_args.kwargs
-    assert kwargs["extra_body"]["thinking"]["budget_tokens"] == 999_998
+    assert kwargs["extra_body"]["thinking"]["budget_tokens"] == 524_287
     assert "reasoning_effort" not in kwargs
     assert reply.reasoning_content == "think"
 
@@ -325,44 +329,9 @@ def test_chat_returns_aireply_fields():
     assert reply.latency_ms >= 0
 
 
-def test_openclaw_is_not_treated_as_deepseek_model() -> None:
-    assert _is_deepseek_model("openclaw") is False
+def test_deepseek_model_detection() -> None:
     assert _is_deepseek_model("deepseek-v4-pro") is True
-
-
-def test_openclaw_agent_request_includes_tool_choice_none() -> None:
-    settings = _make_settings()
-    settings.model = "openclaw"
-    settings.base_url = "http://127.0.0.1:58579/v1"
-    with patch("pa_agent.ai.qclaw_connector.detect_qclaw", return_value=True):
-        assert _openclaw_agent_request_extra(settings) == {"tool_choice": "none"}
-
-
-def test_stream_chat_passes_tool_choice_none_for_openclaw() -> None:
-    settings = _make_settings()
-    settings.model = "openclaw"
-    settings.base_url = "http://127.0.0.1:58579/v1"
-    settings.thinking = False
-    client = DeepSeekClient(settings)
-
-    mock_openai = MagicMock()
-    mock_stream = iter([])
-
-    def _create(**kwargs):
-        mock_openai.last_kwargs = kwargs
-        return mock_stream
-
-    mock_openai.return_value.chat.completions.create.side_effect = _create
-
-    with patch("pa_agent.ai.qclaw_connector.detect_qclaw", return_value=True):
-        with patch("pa_agent.ai.deepseek_client._OpenAI", mock_openai):
-            try:
-                client.stream_chat([{"role": "user", "content": "hi"}])
-            except Exception:
-                pass
-
-    extra = mock_openai.last_kwargs.get("extra_body") or {}
-    assert extra.get("tool_choice") == "none"
+    assert _is_deepseek_model("claude-sonnet-4-6") is False
 
 
 def test_mimo_chat_sends_enable_thinking_extra_body() -> None:

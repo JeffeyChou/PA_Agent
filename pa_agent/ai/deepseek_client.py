@@ -79,52 +79,40 @@ def _is_deepseek_native(base_url: str) -> bool:
 
 
 def _is_deepseek_model(model: str) -> bool:
-    """True for DeepSeek model ids; excludes QClaw ``openclaw`` and WorkBuddy ``openclaw_wb`` Agent aliases."""
+    """True for DeepSeek model ids."""
     m = (model or "").lower()
-    if m in ("openclaw", "openclaw_wb"):
-        return False
-    if m.startswith("openclaw/") or m.startswith("openclaw_wb/"):
-        return False
     return "deepseek" in m
 
 
-def _is_qclaw_openclaw_agent(settings: AIProviderSettings) -> bool:
-    """True when requests go through QClaw's public-gateway OpenClaw Agent."""
-    from pa_agent.ai.qclaw_connector import detect_qclaw, is_openclaw_model
+def supports_kv_prefix_chain(settings: AIProviderSettings | None) -> bool:
+    """Whether Stage 2 may chain after Stage 1 messages for DeepSeek KV prefix cache.
 
-    return bool(is_openclaw_model(settings.model) and detect_qclaw())
-
-
-def _openclaw_agent_request_extra(settings: AIProviderSettings) -> dict[str, Any]:
-    """Ask QClaw/WorkBuddy Agent to answer in-chat only (no exec/write tool loop)."""
-    if _is_qclaw_openclaw_agent(settings) or _is_workbuddy_agent(settings):
-        return {"tool_choice": "none"}
-    return {}
+    Prefix chaining is only enabled for native DeepSeek-style providers where
+    the KV cache behavior is expected.
+    """
+    if settings is None:
+        return True
+    return _is_deepseek_native(settings.base_url) or _is_deepseek_model(settings.model)
 
 
-def _is_workbuddy_agent(settings: AIProviderSettings) -> bool:
-    """True when requests go through WorkBuddy's model route."""
-    from pa_agent.ai.workbuddy_connector import is_workbuddy_route
-
-    return is_workbuddy_route(settings)
+def _extract_cached_prompt_tokens(usage: Any) -> int:
+    """Read KV-cache hit count from provider usage (DeepSeek or OpenAI-compat)."""
+    if usage is None:
+        return 0
+    hit = getattr(usage, "prompt_cache_hit_tokens", None)
+    if hit is not None:
+        return int(hit or 0)
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is not None:
+        cached = getattr(details, "cached_tokens", 0)
+        if cached:
+            return int(cached)
+    return 0
 
 
 def _effective_api_model(settings: AIProviderSettings) -> str:
-    """Model id sent to the upstream API (resolve WorkBuddy aliases)."""
-    if _is_workbuddy_agent(settings):
-        from pa_agent.ai.workbuddy_connector import resolve_workbuddy_api_model
-
-        return resolve_workbuddy_api_model(settings.model)
+    """Model id sent to the upstream API."""
     return settings.model
-
-
-def _workbuddy_agent_request_extra(settings: AIProviderSettings) -> dict[str, Any]:
-    """Add WorkBuddy-specific request parameters.
-
-    Returns empty dict if not using WorkBuddy agent route.
-    WorkBuddy uses the same tool_choice: none strategy as QClaw.
-    """
-    return _openclaw_agent_request_extra(settings)
 
 
 def _is_kkai_openai_proxy(base_url: str) -> bool:
@@ -279,7 +267,6 @@ def _resolve_thinking_params(
     if _is_deepseek_native(settings.base_url) or _is_deepseek_model(model):
         # DeepSeek v4+ requires thinking.type=adaptive + output_config.effort;
         # the old "enabled"/"disabled" values are no longer accepted.
-        # Also covers DeepSeek models proxied through non-native gateways (e.g. QClaw).
         if _thinking:
             extra_body: dict[str, Any] = {
                 "thinking": {"type": "adaptive"},
@@ -368,7 +355,7 @@ class DeepSeekClient:
         self._log = logger_ or logger
 
     def update_provider(self, settings: AIProviderSettings) -> None:
-        """Replace in-memory provider settings (e.g. after QClaw auto-fallback)."""
+        """Replace in-memory provider settings."""
         self._settings = settings
 
     def chat(
@@ -393,7 +380,6 @@ class DeepSeekClient:
         extra_body, _effort = _resolve_thinking_params(
             self._settings, thinking=thinking, reasoning_effort=reasoning_effort
         )
-        extra_body = {**extra_body, **_openclaw_agent_request_extra(self._settings)}
         api_messages, system_param = _prepare_api_messages(self._settings, messages)
         if system_param:
             extra_body = {**extra_body, "system": system_param}
@@ -477,9 +463,7 @@ class DeepSeekClient:
         u = response.usage
         usage = AIUsage(
             prompt_tokens=getattr(u, "prompt_tokens", 0),
-            cached_prompt_tokens=getattr(
-                getattr(u, "prompt_tokens_details", None), "cached_tokens", 0
-            ) if u else 0,
+            cached_prompt_tokens=_extract_cached_prompt_tokens(u),
             completion_tokens=getattr(u, "completion_tokens", 0),
             total_tokens=getattr(u, "total_tokens", 0),
         )
@@ -563,7 +547,6 @@ class DeepSeekClient:
         extra_body, _effort = _resolve_thinking_params(
             self._settings, thinking=thinking, reasoning_effort=reasoning_effort
         )
-        extra_body = {**extra_body, **_openclaw_agent_request_extra(self._settings)}
         api_messages, system_param = _prepare_api_messages(self._settings, messages)
         if system_param:
             extra_body = {**extra_body, "system": system_param}
@@ -637,8 +620,7 @@ class DeepSeekClient:
                     prompt_tokens = getattr(u, "prompt_tokens", 0) or prompt_tokens
                     completion_tokens = getattr(u, "completion_tokens", 0) or completion_tokens
                     total_tokens = getattr(u, "total_tokens", 0) or total_tokens
-                    details = getattr(u, "prompt_tokens_details", None)
-                    cached_tokens = getattr(details, "cached_tokens", 0) if details else cached_tokens
+                    cached_tokens = _extract_cached_prompt_tokens(u) or cached_tokens
 
                 if not getattr(chunk, "choices", None):
                     continue

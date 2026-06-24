@@ -1,0 +1,178 @@
+{
+  "file_name": "completed/2026-06-24-upstream-main-merge.json",
+  "title": "Merge upstream_main into main",
+  "status": "completed",
+  "created": "2026-06-24",
+  "last_updated": "2026-06-24",
+  "owner": "agent",
+  "feature_id": "upstream-main-merge",
+  "source_of_truth": {
+    "handoff_section": "SESSION_HANDOFF.md#open-work",
+    "architecture_context": "ARCHITECTURE.md",
+    "handoff_context": "SESSION_HANDOFF.md"
+  },
+  "overview": {
+    "problem": "Local main diverged from origin/upstream_main and needed the upstream application changes while preserving the local harness workflow docs.",
+    "target_behavior": "main contains origin/upstream_main, OpenClaw/QClaw/Cursor SDK/WorkBuddy provider routes are removed per user request, local harness docs are current, and verification evidence is recorded.",
+    "current_step": 3
+  },
+  "scope": {
+    "in_scope": [
+      "Merge origin/upstream_main into main.",
+      "Resolve merge conflicts in application, prompt, test, and harness documentation files.",
+      "Remove OpenClaw/QClaw provider auto-configuration, relay, fallback, and tests.",
+      "Remove Cursor SDK provider route, dependency, client, and tests.",
+      "Remove WorkBuddy provider auto-configuration, fallback, and tests.",
+      "Update ARCHITECTURE.md and SESSION_HANDOFF.md with the resulting boundaries and verification evidence."
+    ],
+    "out_of_scope": [
+      "New feature development beyond merge reconciliation and requested provider cleanup.",
+      "Live provider, broker, or credential-dependent behavior."
+    ]
+  },
+  "dependencies": {
+    "repo_paths": [
+      "pa_agent/",
+      "prompt_engineering/",
+      "tests/",
+      "docs/plan/",
+      "SESSION_HANDOFF.md",
+      "ARCHITECTURE.md",
+      "init.sh"
+    ],
+    "external_systems": [
+      "None required for the baseline merge and provider cleanup."
+    ],
+    "credentials_or_local_state": [
+      "No credentials required."
+    ],
+    "open_decisions": []
+  },
+  "steps": [
+    {
+      "id": 1,
+      "status": "completed",
+      "description": "Inspect current branch state and divergence from origin/upstream_main.",
+      "expected_changes": [
+        "Active plan file created."
+      ],
+      "verification": [
+        "pwd",
+        "git status --short --branch",
+        "git log --oneline -5",
+        "git log --oneline --decorate --left-right main...origin/upstream_main"
+      ]
+    },
+    {
+      "id": 2,
+      "status": "completed",
+      "description": "Merge origin/upstream_main and resolve conflicts.",
+      "expected_changes": [
+        "Application updates from origin/upstream_main are present on main.",
+        "Local harness docs and workflow files are preserved or updated as needed."
+      ],
+      "verification": [
+        "git status --short --branch",
+        "git diff --check",
+        "rg -n \"^(<{7}|={7}$|>{7})\""
+      ]
+    },
+    {
+      "id": 3,
+      "status": "completed",
+      "description": "Remove requested provider SDK/agent integrations, run verification, and update durable artifacts.",
+      "expected_changes": [
+        "OpenClaw/QClaw, Cursor SDK, and WorkBuddy provider integrations are removed.",
+        "ARCHITECTURE.md records the explicit OpenAI-compatible HTTP provider boundary.",
+        "SESSION_HANDOFF.md records merge result, verification, skipped checks, and restart notes.",
+        "This plan is moved to docs/plan/completed/."
+      ],
+      "verification": [
+        "./init.sh",
+        ".venv/bin/python -m py_compile pa_agent/app_context.py pa_agent/ai/deepseek_client.py pa_agent/ai/mimo_compat.py pa_agent/ai/prompt_assembler.py pa_agent/ai/provider_errors.py pa_agent/ai/stage2_normalizer.py pa_agent/gui/ai_model_settings_dialog.py pa_agent/gui/settings_dialog.py pa_agent/gui/main_window.py pa_agent/orchestrator/two_stage.py",
+        "QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/test_deepseek_client.py tests/unit/test_kv_prefix_cache.py tests/unit/test_prompt_assembler.py tests/unit/test_provider_errors.py tests/unit/test_settings_round_trip.py -q"
+      ]
+    }
+  ],
+  "verification": {
+    "baseline": [
+      "pwd",
+      "git status --short --branch",
+      "git log --oneline -5"
+    ],
+    "required": [
+      "./init.sh",
+      "QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/test_deepseek_client.py tests/unit/test_kv_prefix_cache.py tests/unit/test_prompt_assembler.py tests/unit/test_provider_errors.py tests/unit/test_settings_round_trip.py -q"
+    ],
+    "optional": [
+      "RUN_TESTS=1 ./init.sh",
+      "RUN_LINT=1 ./init.sh",
+      "RUN_INTEGRATION=1 ./init.sh"
+    ],
+    "skipped": [
+      {
+        "command": "RUN_TESTS=1 ./init.sh",
+        "reason": "Focused tests covered touched provider, prompt, and settings surfaces; full suite was broader than required for this merge cleanup.",
+        "follow_up": "Run before making full unit/property tests a release gate."
+      },
+      {
+        "command": "RUN_LINT=1 ./init.sh",
+        "reason": "Not required for this merge cleanup.",
+        "follow_up": "Run before lint-gated release work."
+      },
+      {
+        "command": "RUN_INTEGRATION=1 ./init.sh, RUN_E2E=1 ./init.sh, RUN_LIVE=1 ./init.sh",
+        "reason": "Integration/e2e/live checks need suitable local display, services, or credentials and were outside this merge cleanup.",
+        "follow_up": "Run in an environment with the required local services and credentials."
+      }
+    ]
+  },
+  "evidence": {
+    "commands_run": [
+      "pwd",
+      "git status --short --branch",
+      "git log --oneline -5",
+      "git log --oneline --decorate --left-right main...origin/upstream_main",
+      "git diff --stat main..origin/upstream_main",
+      "git diff --name-status main..origin/upstream_main",
+      "git merge origin/upstream_main",
+      "git diff --check",
+      "rg -n \"qclaw|QClaw|OpenClaw|openclaw|cursor-sdk|cursor_sdk|CursorSdk|WorkBuddy|workbuddy|openclaw_cs|openclaw_wb|claw\" pa_agent tests config README.md ARCHITECTURE.md SESSION_HANDOFF.md docs/plan pyproject.toml",
+      ".venv/bin/python -m py_compile pa_agent/app_context.py pa_agent/ai/deepseek_client.py pa_agent/ai/mimo_compat.py pa_agent/ai/prompt_assembler.py pa_agent/ai/provider_errors.py pa_agent/ai/stage2_normalizer.py pa_agent/gui/ai_model_settings_dialog.py pa_agent/gui/settings_dialog.py pa_agent/gui/main_window.py pa_agent/orchestrator/two_stage.py",
+      "QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/test_deepseek_client.py tests/unit/test_kv_prefix_cache.py tests/unit/test_prompt_assembler.py tests/unit/test_provider_errors.py tests/unit/test_settings_round_trip.py -q",
+      "./init.sh"
+    ],
+    "artifacts": [
+      "docs/plan/completed/2026-06-24-upstream-main-merge.json",
+      "SESSION_HANDOFF.md",
+      "ARCHITECTURE.md"
+    ],
+    "logs": [],
+    "manual_checks": []
+  },
+  "progress_log": [
+    {
+      "date": "2026-06-24",
+      "entry": "Created active plan after confirming main and origin/upstream_main diverged.",
+      "status": "active"
+    },
+    {
+      "date": "2026-06-24",
+      "entry": "Merged origin/upstream_main and resolved four content conflicts.",
+      "status": "in_progress"
+    },
+    {
+      "date": "2026-06-24",
+      "entry": "Removed requested OpenClaw/QClaw, Cursor SDK, and WorkBuddy provider integrations and updated docs.",
+      "status": "completed"
+    }
+  ],
+  "completion": {
+    "resolved": true,
+    "resolved_date": "2026-06-24",
+    "summary": "origin/upstream_main was merged into main, conflicts were resolved, provider SDK/agent integrations were removed, and focused verification plus the harness passed.",
+    "follow_up": [
+      "Run full RUN_TESTS=1 and RUN_LINT=1 checks when broader release gating is needed."
+    ]
+  }
+}

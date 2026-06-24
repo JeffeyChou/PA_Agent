@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any
 
+from pa_agent.ai.coherence_checks import BAR_BY_BAR_TARGET_COUNT
 from pa_agent.ai.trace_normalize import normalize_stage1_traces
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,13 @@ _STRATEGY_FILE_ALIASES: dict[str, str] = {
     "交易区间交易策略.txt": "震荡区间交易策略.txt",
     "宽通道分析识别.txt": "文件13-窄通道与宽通道策略.txt",
     "宽通道交易策略.txt": "文件13-窄通道与宽通道策略.txt",
+    "下跌通道策略.txt": "下跌通道交易策略.txt",
+    "下跌通道策略": "下跌通道交易策略.txt",
 }
 
 _BAR_ROLE_ALIASES: dict[str, str] = {
+    "reversal_attempt": "signal",
+    "reversal": "signal",
     "continue": "confirmation",
     "continued": "confirmation",
     "continuation": "confirmation",
@@ -27,7 +32,6 @@ _BAR_ROLE_ALIASES: dict[str, str] = {
     "follow-through": "confirmation",
     "confirm": "confirmation",
     "confirmed": "confirmation",
-    "reversal": "signal",
     "breakout": "signal",
     "setup": "signal",
     "pullback": "test",
@@ -96,11 +100,92 @@ _CONTEXT_EFFECT_ALIASES: dict[str, str] = {
     "weakens_bear": "weakens_bear",
     "weaken_bull": "weakens_bull",
     "weaken_bear": "weakens_bear",
+    "weakened_bull": "weakened_bull",
+    "weakened_bear": "weakened_bear",
     "weakens_bulls": "weakens_bull",           # AI typo: extra 's'
     "weakens_bears": "weakens_bear",           # AI typo: extra 's'
     "neutral": "neutral",
     "transition": "transition",
 }
+
+_BAR_TYPE_ENUM = frozenset({
+    "trend_bull", "trend_bear", "doji", "inside",
+    "outside_bull", "outside_bear", "flat", "other",
+})
+_BAR_TYPE_ALIASES: dict[str, str] = {
+    "ine": "inside",
+    "ins": "inside",
+    "insid": "inside",
+    "doj": "doji",
+    "trendbull": "trend_bull",
+    "trendbear": "trend_bear",
+    "outsidebull": "outside_bull",
+    "outsidebear": "outside_bear",
+}
+
+
+def _strip_enum_suffix(raw: str) -> str:
+    text = raw.strip()
+    for sep in ("（", "(", "【", "[", "—", "–", " - ", "：", ":"):
+        if sep in text:
+            head = text.split(sep, 1)[0].strip()
+            if head:
+                return head
+    return text
+
+
+def _normalize_bar_type_value(raw: object) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    text = _strip_enum_suffix(raw)
+    key = text.strip().lower().replace(" ", "_")
+    key = _BAR_TYPE_ALIASES.get(key, key)
+    if key in _BAR_TYPE_ENUM:
+        return key
+    for token in sorted(_BAR_TYPE_ENUM, key=len, reverse=True):
+        if key.startswith(token) or token.startswith(key):
+            return token
+    return None
+
+
+def _bar_type_from_summary(out: dict[str, Any], bar_label: str) -> str | None:
+    summary = out.get("bar_by_bar_summary")
+    if not isinstance(summary, list):
+        return None
+    target = str(bar_label or "K1").strip().upper()
+    for item in summary:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("bar", "")).strip().upper() != target:
+            continue
+        return _normalize_bar_type_value(item.get("bar_type"))
+    return None
+
+
+def _normalize_bar_types(out: dict[str, Any]) -> None:
+    """Fix truncated bar_type tokens (e.g. inside→ine) before schema validation."""
+    summary = out.get("bar_by_bar_summary")
+    if isinstance(summary, list):
+        for item in summary:
+            if not isinstance(item, dict):
+                continue
+            raw = item.get("bar_type")
+            norm = _normalize_bar_type_value(raw)
+            if norm and norm != raw:
+                item["bar_type"] = norm
+                logger.debug("Mapped bar_by_bar_summary bar_type %r -> %s", raw, norm)
+
+    bar_analysis = out.get("bar_analysis")
+    if not isinstance(bar_analysis, dict):
+        return
+    raw_bt = bar_analysis.get("bar_type")
+    norm_bt = _normalize_bar_type_value(raw_bt)
+    if norm_bt is None:
+        last_bar = str(bar_analysis.get("last_closed_bar") or "K1")
+        norm_bt = _bar_type_from_summary(out, last_bar)
+    if norm_bt and norm_bt != raw_bt:
+        bar_analysis["bar_type"] = norm_bt
+        logger.debug("Mapped bar_analysis.bar_type %r -> %s", raw_bt, norm_bt)
 
 
 def _hoist_bar_by_bar_summary(out: dict[str, Any]) -> None:
@@ -209,8 +294,12 @@ def _normalize_signal_bar_object(out: dict[str, Any]) -> bool:
     if isinstance(signal_bar, dict):
         if not str(signal_bar.get("reason", "") or "").strip():
             signal_bar["reason"] = "见 bar_by_bar_summary"
-        signal_bar.setdefault("bar", None)
-        signal_bar.setdefault("quality", "invalid")
+        if "bar" not in signal_bar:
+            signal_bar["bar"] = None
+        q = signal_bar.get("quality")
+        if q is None or not isinstance(q, str) or not str(q).strip():
+            # setdefault skips explicit null; schema requires enum string
+            signal_bar["quality"] = "invalid" if signal_bar.get("bar") is None else "weak"
         return False
 
     inferred = _infer_signal_bar_from_summary(out.get("bar_by_bar_summary"))
@@ -243,7 +332,8 @@ def _normalize_signal_bar_quality(out: dict[str, Any]) -> None:
     if not isinstance(signal_bar, dict):
         return
     quality = signal_bar.get("quality")
-    if not isinstance(quality, str):
+    if quality is None or not isinstance(quality, str) or not str(quality).strip():
+        signal_bar["quality"] = "invalid" if signal_bar.get("bar") is None else "weak"
         return
     key = quality.strip().lower()
     normalized = _SIGNAL_BAR_QUALITY_ALIASES.get(key)
@@ -274,7 +364,7 @@ def _pad_bar_by_bar_summary_to_minimum(
     *,
     kline_frame: Any = None,
 ) -> None:
-    """Pad bar_by_bar_summary to min(8, n_bars) using geometry stubs for missing K1..Kn."""
+    """Pad bar_by_bar_summary to min(BAR_BY_BAR_TARGET_COUNT, n_bars) using geometry stubs."""
     summary = out.get("bar_by_bar_summary")
     if not isinstance(summary, list) or kline_frame is None:
         return
@@ -285,7 +375,8 @@ def _pad_bar_by_bar_summary_to_minimum(
     if n_bars < 1:
         return
 
-    expected_min = min(8, n_bars) if n_bars >= 8 else n_bars
+    target = BAR_BY_BAR_TARGET_COUNT
+    expected_min = min(target, n_bars) if n_bars >= target else n_bars
     if len(summary) >= expected_min:
         return
 
@@ -467,12 +558,31 @@ def normalize_stage1(
 
     from pa_agent.ai.pattern_routing import ensure_detected_patterns_coherent
 
-    ensure_detected_patterns_coherent(out)
+    if kline_frame is not None:
+        try:
+            from pa_agent.ai.market_features import build_program_features_dict
+
+            out["program_features"] = build_program_features_dict(kline_frame)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("build_program_features_dict failed: %s", exc)
+
+    ensure_detected_patterns_coherent(out, kline_frame=kline_frame)
+
+    if not out.get("climax_risk"):
+        patterns = out.get("detected_patterns") or []
+        if isinstance(patterns, list):
+            if "climax_triggered" in patterns:
+                out["climax_risk"] = "triggered"
+            elif "climax_warning" in patterns:
+                out["climax_risk"] = "warning"
+        if not out.get("climax_risk"):
+            out["climax_risk"] = "none"
 
     _hoist_bar_by_bar_summary(out)
     normalize_stage1_traces(out, normalization_mode=normalization_mode)
     _normalize_bar_by_bar_roles(out)
     _normalize_bar_by_bar_context_effects(out)
+    _normalize_bar_types(out)
     _normalize_signal_bar_object(out)
     _normalize_signal_bar_quality(out)
     _normalize_transition_risk(out)
